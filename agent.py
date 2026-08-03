@@ -1,9 +1,7 @@
-
 import os
 import json
 import requests
 from langchain_groq import ChatGroq
-from langchain_tavily import TavilySearch
 from langchain_core.prompts import ChatPromptTemplate
 
 # Credentials
@@ -14,65 +12,83 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 CANDIDATE_PROFILE = """
 Candidate Name: Muchamat Riyan Khamdani
-Education: Bachelor of Applied Science in Internet Engineering Technology (UGM)
 Current Role: Cloud Engineer / SRE / DevOps
-Tech Stack: AWS, GCP, Alibaba Cloud, Terraform, Ansible, Docker, Kubernetes, Jenkins, Bamboo, Grafana, PostgreSQL, MySQL.
-Target Roles: Cloud Engineer, DevOps Engineer, Site Reliability Engineer (SRE), Infrastructure Engineer.
+Tech Stack: AWS, GCP, Alibaba Cloud, Terraform, Ansible, Docker, Kubernetes, Jenkins, Grafana, PostgreSQL.
+Preferences: Remote Worldwide, OR Onsite with Visa Sponsorship.
 """
 
-def search_jobs():
-    search_tool = TavilySearch(max_results=5)
-    # Query dibuat lebih broad & modern
+def search_tavily_direct(query):
+    """Panggil Tavily API langsung via HTTP Request (Anti-Gagal)"""
+    url = "https://api.tavily.com/search"
+    payload = {
+        "api_key": TAVILY_API_KEY,
+        "query": query,
+        "max_results": 4,
+        "search_depth": "basic"
+    }
+    try:
+        response = requests.post(url, json=payload, timeout=15)
+        if response.status_code == 200:
+            results = response.json().get("results", [])
+            # Ambil title, content, dan url aja biar ringkas
+            return [{"title": r.get("title"), "url": r.get("url"), "content": r.get("content")} for r in results]
+        else:
+            print(f"Tavily Error ({response.status_code}): {response.text}")
+            return []
+    except Exception as e:
+        print(f"Failed Tavily search for '{query}': {e}")
+        return []
+
+def search_all_jobs():
     queries = [
-        "Cloud Engineer remote job hiring worldwide",
-        "DevOps Engineer visa sponsorship Europe remote",
+        "Cloud Engineer remote hiring worldwide 2026",
+        "DevOps Engineer visa sponsorship Europe remote job",
         "Site Reliability Engineer remote worldwide Terraform",
-        "Senior Cloud Engineer remote hiring 2026"
+        "site:greenhouse.io Cloud Engineer remote"
     ]
     
-    raw_results = []
-    print("🔎 Searching for jobs matching Riyan's profile...")
+    all_results = []
+    print("🔎 Searching real jobs from web...")
     for q in queries:
-        try:
-            res = search_tool.invoke({"query": q})
-            raw_results.extend(res)
-        except Exception as e:
-            print(f"Error searching for '{q}': {e}")
-            
-    return raw_results
+        results = search_tavily_direct(q)
+        all_results.extend(results)
+        
+    print(f"✅ Found {len(all_results)} raw job articles/postings.")
+    return all_results
 
 def filter_and_format_jobs(raw_jobs):
-    print("🤖 Agent analyzing jobs using Groq Llama 3.3...")
-    llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0.2, api_key=GROQ_API_KEY)
+    print("🤖 Agent analyzing REAL jobs using Groq Llama 3.3...")
+    llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0.1, api_key=GROQ_API_KEY)
     
     prompt_template = ChatPromptTemplate.from_template("""
-    You are a helpful Career Assistant for Muchamat Riyan Khamdani.
+    You are an expert Job Hunter AI Agent for Muchamat Riyan Khamdani.
     Candidate Profile: {profile}
-    Raw Search Data: {raw_jobs}
+    
+    REAL Search Data from the Web:
+    {raw_jobs}
 
-    Task:
-    Pick the TOP 3 to 5 most relevant Cloud/DevOps/SRE jobs from the search data.
-    Even if a job isn't 100% explicit about remote/visa, as long as it matches his Cloud/DevOps stack, include it.
+    CRITICAL INSTRUCTION:
+    1. Extract 3 to 5 ACTUAL job openings from the search data provided above.
+    2. DO NOT MAKE UP OR HALLUCINATE ANY JOBS. ONLY use the URLs and Companies provided in the Raw Search Data.
+    3. If a link isn't a job application, skip it.
 
-    Format the response in Bahasa Indonesia cleanly for Telegram (Use HTML tags or clean Markdown):
+    Format the final report in Bahasa Indonesia for Telegram like this:
 
     ⚡ **JOB HUNTER REPORT (Riyan)** ⚡
 
     🚀 **[Job Title]**
     🏢 **Perusahaan:** [Company Name]
-    📍 **Lokasi/Tipe:** [Remote / Location / Onsite]
-    🛠 **Tech Stack:** [Matching Tech Stack]
-    🔗 **Link:** [Direct URL]
-    
-    ---
+    📍 **Lokasi/Tipe:** [Remote / City]
+    🛠 **Summary:** [Brief job summary / required stack]
+    🔗 **Link:** [Real URL from data]
 
-    Do NOT return "NO_MATCHES". Always summarize the best opportunities found in the raw data.
+    ---
     """)
 
     chain = prompt_template | llm
     response = chain.invoke({
         "profile": CANDIDATE_PROFILE,
-        "raw_jobs": json.dumps(raw_jobs)
+        "raw_jobs": json.dumps(raw_jobs, indent=2)
     })
     
     return response.content
@@ -92,11 +108,14 @@ def send_telegram(text):
     
     res = requests.post(url, json=payload)
     if res.status_code != 200:
-        print(f"Failed to send message via Telegram: {res.text}")
+        print(f"Failed to send Telegram message: {res.text}")
     else:
-        print("Message successfully sent to Telegram!")
+        print("🚀 Message successfully sent to Telegram!")
 
 if __name__ == "__main__":
-    raw_data = search_jobs()
-    formatted_report = filter_and_format_jobs(raw_data)
-    send_telegram(formatted_report)
+    raw_data = search_all_jobs()
+    if not raw_data:
+        print("No search results returned from Tavily. Check TAVILY_API_KEY.")
+    else:
+        formatted_report = filter_and_format_jobs(raw_data)
+        send_telegram(formatted_report)
