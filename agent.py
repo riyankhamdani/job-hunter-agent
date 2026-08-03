@@ -8,12 +8,23 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# Profil Riyan diambil langsung dari CV resmi
+CANDIDATE_PROFILE = """
+Candidate Name: Muchamat Riyan Khamdani
+Education: Bachelor of Applied Science in Internet Engineering Technology (UGM)
+Current Role: Cloud Engineer at Izeno (Prev: L2 Cloud Engineer at Datacomm Diangraha)
+Tech Stack: AWS, GCP, Alibaba Cloud (ACA Certified), Terraform, Ansible, Docker, Kubernetes, Jenkins, Bamboo, Grafana, PostgreSQL, MySQL, VMware vSphere, NSX-T, Zerto.
+Key Strengths: Infrastructure as Code (60% deployment reduction), High Availability & Database Tuning (99.9% uptime), Cloud & Hybrid Virtualization.
+Target Roles: Cloud Engineer, DevOps Engineer, Site Reliability Engineer (SRE), Infrastructure Engineer.
+Preferences: Fully Remote Worldwide, OR Onsite with Visa Sponsorship/Relocation.
+"""
+
 def search_tavily_direct(query):
     url = "https://api.tavily.com/search"
     payload = {
         "api_key": TAVILY_API_KEY,
         "query": query,
-        "max_results": 3,
+        "max_results": 4,
         "search_depth": "basic"
     }
     try:
@@ -30,7 +41,8 @@ def get_real_jobs():
     queries = [
         "Cloud Engineer remote hiring worldwide 2026",
         "DevOps Engineer visa sponsorship Europe job",
-        "Site Reliability Engineer remote Terraform"
+        "Site Reliability Engineer remote Terraform",
+        "site:greenhouse.io Cloud Engineer remote"
     ]
     
     all_results = []
@@ -44,13 +56,16 @@ def get_real_jobs():
     return list(unique_jobs)
 
 def filter_with_groq(jobs):
-    print("🤖 Agent filtering real jobs...")
+    print("🤖 Agent filtering jobs based on Riyan's CV profile...")
     llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0.1, api_key=GROQ_API_KEY)
     
     valid_jobs = []
-    for job in jobs[:7]: # Cek max 7 lowongan teratas
+    for job in jobs[:8]: # Cek max 8 lowongan teratas
         prompt = f"""
-        Analyze if this web search result is an ACTUAL Job Opening/Career Opportunity for Cloud/DevOps/SRE Engineer.
+        Candidate Profile:
+        {CANDIDATE_PROFILE}
+
+        Analyze if this web search result is a RELEVANT Job Opening/Career Opportunity for Riyan's Cloud/DevOps/SRE profile.
         Title: {job['title']}
         Snippet: {job['snippet']}
         
@@ -62,9 +77,9 @@ def filter_with_groq(jobs):
                 valid_jobs.append(job)
         except Exception as e:
             print(f"Groq filter error: {e}")
-            valid_jobs.append(job) # Tetep masukin kalo Groq error
+            valid_jobs.append(job) # Fallback tetep masukin kalo Groq timeout
             
-    return valid_jobs if valid_jobs else jobs[:4] # Fallback pake 4 job pertama kalo AI ngambek
+    return valid_jobs if valid_jobs else jobs[:4]
 
 def send_telegram(jobs):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
