@@ -1,3 +1,4 @@
+
 import os
 import json
 import requests
@@ -5,7 +6,7 @@ from langchain_groq import ChatGroq
 from langchain_tavily import TavilySearch
 from langchain_core.prompts import ChatPromptTemplate
 
-# Credentials dari Environment
+# Credentials
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -14,22 +15,19 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 CANDIDATE_PROFILE = """
 Candidate Name: Muchamat Riyan Khamdani
 Education: Bachelor of Applied Science in Internet Engineering Technology (UGM)
-Current Role: Cloud Engineer / SRE
-Tech Stack: AWS, GCP, Alibaba Cloud (ACA), Terraform, Ansible, Docker, Jenkins, Bamboo, Grafana, PostgreSQL, MySQL, VMware, Zerto.
-
-Preferences:
-1. FULLY REMOTE (Worldwide / APAC / Europe / US Timezones).
-2. ONSITE / HYBRID BUT MUST EXPLICITLY PROVIDE VISA SPONSORSHIP / RELOCATION.
+Current Role: Cloud Engineer / SRE / DevOps
+Tech Stack: AWS, GCP, Alibaba Cloud, Terraform, Ansible, Docker, Kubernetes, Jenkins, Bamboo, Grafana, PostgreSQL, MySQL.
+Target Roles: Cloud Engineer, DevOps Engineer, Site Reliability Engineer (SRE), Infrastructure Engineer.
 """
 
 def search_jobs():
-    search_tool = TavilySearch(max_results=10)
+    search_tool = TavilySearch(max_results=5)
+    # Query dibuat lebih broad & modern
     queries = [
-        "Cloud Engineer remote worldwide",
-        "DevOps Engineer visa sponsorship relocate Europe",
-        "Site Reliability Engineer remote APAC Europe US",
-        "Terraform Kubernetes Cloud Engineer remote",
-        "site:linkedin.com/jobs Cloud Engineer remote visa sponsorship"
+        "Cloud Engineer remote job hiring worldwide",
+        "DevOps Engineer visa sponsorship Europe remote",
+        "Site Reliability Engineer remote worldwide Terraform",
+        "Senior Cloud Engineer remote hiring 2026"
     ]
     
     raw_results = []
@@ -45,26 +43,30 @@ def search_jobs():
 
 def filter_and_format_jobs(raw_jobs):
     print("🤖 Agent analyzing jobs using Groq Llama 3.3...")
-    # Menggunakan model Llama 3.3 70B yang sangat pintar & gratis di Groq
-    llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0.1, api_key=GROQ_API_KEY)
+    llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0.2, api_key=GROQ_API_KEY)
     
     prompt_template = ChatPromptTemplate.from_template("""
-    You are a professional Job Hunter AI Agent acting for Muchamat Riyan Khamdani.
+    You are a helpful Career Assistant for Muchamat Riyan Khamdani.
     Candidate Profile: {profile}
-    Raw Search Results: {raw_jobs}
+    Raw Search Data: {raw_jobs}
 
     Task:
-    1. Filter to ONLY keep jobs that fit:
-       - Fully Remote (Worldwide or flexible)
-       - OR Onsite/Hybrid WITH Visa Sponsorship / Relocation assistance.
-    2. Format for Telegram in Bahasa Indonesia:
-       🚀 **[Job Title]**
-       🏢 **Company:** [Name]
-       📍 **Location:** [Remote / City + Visa]
-       🛠 **Stack Match:** [Key Techs]
-       🔗 **Link:** [URL]
-       ---
-    If no strong matches found, return "NO_MATCHES".
+    Pick the TOP 3 to 5 most relevant Cloud/DevOps/SRE jobs from the search data.
+    Even if a job isn't 100% explicit about remote/visa, as long as it matches his Cloud/DevOps stack, include it.
+
+    Format the response in Bahasa Indonesia cleanly for Telegram (Use HTML tags or clean Markdown):
+
+    ⚡ **JOB HUNTER REPORT (Riyan)** ⚡
+
+    🚀 **[Job Title]**
+    🏢 **Perusahaan:** [Company Name]
+    📍 **Lokasi/Tipe:** [Remote / Location / Onsite]
+    🛠 **Tech Stack:** [Matching Tech Stack]
+    🔗 **Link:** [Direct URL]
+    
+    ---
+
+    Do NOT return "NO_MATCHES". Always summarize the best opportunities found in the raw data.
     """)
 
     chain = prompt_template | llm
@@ -77,7 +79,7 @@ def filter_and_format_jobs(raw_jobs):
 
 def send_telegram(text):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram keys missing. Output to log:\n", text)
+        print("Telegram credentials missing!")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -87,17 +89,14 @@ def send_telegram(text):
         "parse_mode": "Markdown",
         "disable_web_page_preview": True
     }
-    try:
-        requests.post(url, json=payload)
-    except Exception as e:
-        print(f"Failed to send Telegram message: {e}")
+    
+    res = requests.post(url, json=payload)
+    if res.status_code != 200:
+        print(f"Failed to send message via Telegram: {res.text}")
+    else:
+        print("Message successfully sent to Telegram!")
 
 if __name__ == "__main__":
     raw_data = search_jobs()
     formatted_report = filter_and_format_jobs(raw_data)
-    
-    if "NO_MATCHES" in formatted_report or not formatted_report.strip():
-        print("No matches found today.")
-    else:
-        header = "⚡ **JOB HUNTER AGENT REPORT (For Riyan)** ⚡\n\n"
-        send_telegram(header + formatted_report)
+    send_telegram(formatted_report)
