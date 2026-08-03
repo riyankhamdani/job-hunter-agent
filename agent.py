@@ -23,12 +23,13 @@ Preferences:
 """
 
 def search_jobs():
-    search_tool = TavilySearch(max_results=8)
+    search_tool = TavilySearch(max_results=10)
     queries = [
-        "site:relocate.me Cloud Engineer OR DevOps visa sponsorship",
-        "site:greenhouse.io OR site:lever.co Cloud Engineer remote worldwide Terraform Ansible",
-        "DevOps Cloud Engineer visa sponsorship Europe 2026",
-        "Senior Cloud Engineer remote worldwide Terraform Grafana"
+        "Cloud Engineer remote worldwide",
+        "DevOps Engineer visa sponsorship relocate Europe",
+        "Site Reliability Engineer remote APAC Europe US",
+        "Terraform Kubernetes Cloud Engineer remote",
+        "site:linkedin.com/jobs Cloud Engineer remote visa sponsorship"
     ]
     
     raw_results = []
