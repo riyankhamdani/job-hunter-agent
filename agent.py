@@ -46,7 +46,8 @@ def search_tavily(query, domains=None):
             # Validasi Domain ATS Direct & Link LinkedIn Spesifik
             allowed_domains = [
                 "greenhouse.io", "jobs.lever.co", "apply.workable.com", 
-                "jobs.smartrecruiters.com", "ashbyhq.com", "linkedin.com/jobs/view"
+                "jobs.smartrecruiters.com", "ashbyhq.com", "linkedin.com/jobs/view",
+                "hatch.co", "bamboohr.com"
             ]
 
             for r in results:
@@ -60,7 +61,7 @@ def search_tavily(query, domains=None):
                         "snippet": r.get("content", "")[:300]
                     })
             
-            return valid_jobs[:3]
+            return valid_jobs
         return []
     except Exception as e:
         print(f"❌ Error searching '{query}': {e}")
@@ -69,27 +70,36 @@ def search_tavily(query, domains=None):
 def get_job_postings():
     today_str = datetime.now().strftime("%B %Y")
     
-    # Domain ATS resmi untuk nembak link pendaftaran langsung
+    # Domain ATS resmi
     ats_domains = [
         "boards.greenhouse.io", "job-boards.greenhouse.io", 
-        "jobs.lever.co", "apply.workable.com", "ashbyhq.com"
+        "jobs.lever.co", "apply.workable.com", "ashbyhq.com", "jobs.smartrecruiters.com"
     ]
     
-    queries = {
-        "REMOTE_GLOBAL": {
-            "query": f"DevOps OR Cloud Engineer Remote Worldwide Anywhere {today_str}",
-            "domains": ats_domains
-        },
-        "VISA_SPONSOR": {
-            "query": f"DevOps OR Cloud Engineer visa sponsorship relocation Europe Switzerland Netherlands Sweden {today_str}",
-            "domains": ["linkedin.com", "jobs.lever.co", "boards.greenhouse.io"]
-        }
-    }
+    # Memecah query menjadi beberapa pencarian kecil agar Tavily tidak bingung
+    search_configs = [
+        # Remote Searches
+        {"category": "REMOTE_GLOBAL", "query": f'"DevOps" "Remote Worldwide" {today_str}', "domains": ats_domains},
+        {"category": "REMOTE_GLOBAL", "query": f'"Cloud Engineer" "Remote Anywhere" {today_str}', "domains": ats_domains},
+        
+        # Visa Sponsor Searches (Targeting Stable Regions)
+        {"category": "VISA_SPONSOR", "query": f'"DevOps" "visa sponsorship" Europe {today_str}', "domains": None},
+        {"category": "VISA_SPONSOR", "query": f'"Cloud Engineer" "relocation" Switzerland Netherlands Sweden Singapore Australia {today_str}', "domains": None}
+    ]
     
-    job_data = {}
+    job_data = {"REMOTE_GLOBAL": [], "VISA_SPONSOR": []}
     print(f"🔎 Searching direct job apply links (Past 24 Hours) for {today_str}...")
-    for category, config in queries.items():
-        job_data[category] = search_tavily(config["query"], config["domains"])
+    
+    for cfg in search_configs:
+        results = search_tavily(cfg["query"], cfg["domains"])
+        # Gabungkan dan filter agar tidak ada URL ganda
+        for item in results:
+            if not any(existing['url'] == item['url'] for existing in job_data[cfg["category"]]):
+                job_data[cfg["category"]].append(item)
+        
+    # Ambil maksimal 3-4 terbaik per kategori
+    job_data["REMOTE_GLOBAL"] = job_data["REMOTE_GLOBAL"][:4]
+    job_data["VISA_SPONSOR"] = job_data["VISA_SPONSOR"][:4]
         
     return job_data
 
@@ -115,11 +125,12 @@ def summarize_with_groq(job_data):
        - 🌐 **LOWONGAN REMOTE GLOBAL (24 JAM TERAKHIR)**
        - ✈️ **LOWONGAN VISA SPONSOR / RELOKASI (NEGARA STABIL)**
     2. Filter out any job from geopolitically unstable countries.
-    3. For each job, output ONLY:
+    3. If VISA_SPONSOR has results, present them clearly. If VISA_SPONSOR is truly empty, write: "Belum ada update visa sponsor baru dalam 24 jam terakhir dari negara target."
+    4. For each valid job, output ONLY:
        - Bold Job Title & Company Name
        - 1 short sentence summarizing key requirements/tech stack matching Riyan
        - The EXACT direct application link provided in the raw data.
-    4. ABSOLUTE RULE FOR URL: Copy the exact full "url" string provided in the raw data without altering it.
+    5. ABSOLUTE RULE FOR URL: Copy the exact full "url" string provided in the raw data without altering it.
 
     Format template:
     💼 **DAILY JOB HUNTER DIGEST** 💼
