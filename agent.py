@@ -29,7 +29,7 @@ def search_tavily(query, domains=None):
         "api_key": TAVILY_API_KEY,
         "query": query,
         "topic": "general",
-        "days": 1,                   # DIKUNCI 1 HARI (24 JAM TERAKHIR) BIAR GAK BASI!
+        "days": 1,                   # DIKUNCI 1 HARI (24 JAM TERAKHIR)
         "max_results": 7,
         "search_depth": "advanced"
     }
@@ -43,7 +43,7 @@ def search_tavily(query, domains=None):
             results = response.json().get("results", [])
             valid_jobs = []
 
-            # Validasi Domain ATS Direct & Link LinkedIn Spesifik
+            # Daftar domain ATS dan portal loker spesifik
             allowed_domains = [
                 "greenhouse.io", "jobs.lever.co", "apply.workable.com", 
                 "jobs.smartrecruiters.com", "ashbyhq.com", "linkedin.com/jobs/view",
@@ -52,9 +52,15 @@ def search_tavily(query, domains=None):
 
             for r in results:
                 link = r.get("url", "")
-                is_direct_job = any(domain in link for domain in allowed_domains)
                 
-                if is_direct_job:
+                # JIKA domains dispesifikasikan (REMOTE), VALIDASI DOMAIN.
+                # JIKA domains=None (VISA_SPONSOR), TERIMA LINK SELAMA BUKAN LINK SEARCH/KATALOG KOSONG.
+                if domains:
+                    is_valid = any(domain in link for domain in allowed_domains)
+                else:
+                    is_valid = len(link.split("/")) > 3 and not link.endswith("/jobs") and not link.endswith("/search")
+
+                if is_valid:
                     valid_jobs.append({
                         "title": r.get("title", "Job Posting"),
                         "url": link,
@@ -70,21 +76,21 @@ def search_tavily(query, domains=None):
 def get_job_postings():
     today_str = datetime.now().strftime("%B %Y")
     
-    # Domain ATS resmi
+    # Domain ATS resmi untuk Remote
     ats_domains = [
         "boards.greenhouse.io", "job-boards.greenhouse.io", 
         "jobs.lever.co", "apply.workable.com", "ashbyhq.com", "jobs.smartrecruiters.com"
     ]
     
-    # Memecah query menjadi beberapa pencarian kecil agar Tavily tidak bingung
+    # Query dipecah spesifik per kategori & kata kunci
     search_configs = [
         # Remote Searches
         {"category": "REMOTE_GLOBAL", "query": f'"DevOps" "Remote Worldwide" {today_str}', "domains": ats_domains},
         {"category": "REMOTE_GLOBAL", "query": f'"Cloud Engineer" "Remote Anywhere" {today_str}', "domains": ats_domains},
         
-        # Visa Sponsor Searches (Targeting Stable Regions)
+        # Visa Sponsor Searches (Dibebaskan domain-nya)
         {"category": "VISA_SPONSOR", "query": f'"DevOps" "visa sponsorship" Europe {today_str}', "domains": None},
-        {"category": "VISA_SPONSOR", "query": f'"Cloud Engineer" "relocation" Switzerland Netherlands Sweden Singapore Australia {today_str}', "domains": None}
+        {"category": "VISA_SPONSOR", "query": f'"Cloud Engineer" "relocation" Switzerland OR Netherlands OR Sweden OR Australia {today_str}', "domains": None}
     ]
     
     job_data = {"REMOTE_GLOBAL": [], "VISA_SPONSOR": []}
@@ -92,12 +98,10 @@ def get_job_postings():
     
     for cfg in search_configs:
         results = search_tavily(cfg["query"], cfg["domains"])
-        # Gabungkan dan filter agar tidak ada URL ganda
         for item in results:
             if not any(existing['url'] == item['url'] for existing in job_data[cfg["category"]]):
                 job_data[cfg["category"]].append(item)
         
-    # Ambil maksimal 3-4 terbaik per kategori
     job_data["REMOTE_GLOBAL"] = job_data["REMOTE_GLOBAL"][:4]
     job_data["VISA_SPONSOR"] = job_data["VISA_SPONSOR"][:4]
         
