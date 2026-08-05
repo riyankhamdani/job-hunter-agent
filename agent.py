@@ -43,7 +43,6 @@ def search_tavily(query, domains=None):
             results = response.json().get("results", [])
             valid_jobs = []
 
-            # Daftar domain ATS dan portal loker spesifik
             allowed_domains = [
                 "greenhouse.io", "jobs.lever.co", "apply.workable.com", 
                 "jobs.smartrecruiters.com", "ashbyhq.com", "linkedin.com/jobs/view",
@@ -53,12 +52,16 @@ def search_tavily(query, domains=None):
             for r in results:
                 link = r.get("url", "")
                 
-                # JIKA domains dispesifikasikan (REMOTE), VALIDASI DOMAIN.
-                # JIKA domains=None (VISA_SPONSOR), TERIMA LINK SELAMA BUKAN LINK SEARCH/KATALOG KOSONG.
+                # Validasi link agar tidak ngambil katalog search atau link query seperti Indeed
                 if domains:
                     is_valid = any(domain in link for domain in allowed_domains)
                 else:
-                    is_valid = len(link.split("/")) > 3 and not link.endswith("/jobs") and not link.endswith("/search")
+                    is_valid = (
+                        len(link.split("/")) > 3 
+                        and not link.endswith("/jobs") 
+                        and not link.endswith("/search")
+                        and "q-" not in link  # Mencegah link search query Indeed
+                    )
 
                 if is_valid:
                     valid_jobs.append({
@@ -76,19 +79,17 @@ def search_tavily(query, domains=None):
 def get_job_postings():
     today_str = datetime.now().strftime("%B %Y")
     
-    # Domain ATS resmi untuk Remote
     ats_domains = [
         "boards.greenhouse.io", "job-boards.greenhouse.io", 
         "jobs.lever.co", "apply.workable.com", "ashbyhq.com", "jobs.smartrecruiters.com"
     ]
     
-    # Query dipecah spesifik per kategori & kata kunci
     search_configs = [
         # Remote Searches
         {"category": "REMOTE_GLOBAL", "query": f'"DevOps" "Remote Worldwide" {today_str}', "domains": ats_domains},
         {"category": "REMOTE_GLOBAL", "query": f'"Cloud Engineer" "Remote Anywhere" {today_str}', "domains": ats_domains},
         
-        # Visa Sponsor Searches (Dibebaskan domain-nya)
+        # Visa Sponsor Searches (Targeting Stable Regions)
         {"category": "VISA_SPONSOR", "query": f'"DevOps" "visa sponsorship" Europe {today_str}', "domains": None},
         {"category": "VISA_SPONSOR", "query": f'"Cloud Engineer" "relocation" Switzerland OR Netherlands OR Sweden OR Australia {today_str}', "domains": None}
     ]
