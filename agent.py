@@ -52,7 +52,7 @@ def search_tavily(query, domains=None):
             for r in results:
                 link = r.get("url", "")
                 
-                # Validasi link agar tidak ngambil katalog search atau link query seperti Indeed
+                # Validasi link agar tidak mengambil katalog search atau link query seperti Indeed
                 if domains:
                     is_valid = any(domain in link for domain in allowed_domains)
                 else:
@@ -77,25 +77,25 @@ def search_tavily(query, domains=None):
         return []
 
 def get_job_postings():
-    today_str = datetime.now().strftime("%B %Y")
-    
+    # Menghapus penguncian bulan/tahun agar hasil tidak monoton di cache Tavily
     ats_domains = [
         "boards.greenhouse.io", "job-boards.greenhouse.io", 
         "jobs.lever.co", "apply.workable.com", "ashbyhq.com", "jobs.smartrecruiters.com"
     ]
     
+    # Query dibuat fleksibel + membuang kata kunci "-salesforce -apex"
     search_configs = [
         # Remote Searches
-        {"category": "REMOTE_GLOBAL", "query": f'"DevOps" "Remote Worldwide" {today_str}', "domains": ats_domains},
-        {"category": "REMOTE_GLOBAL", "query": f'"Cloud Engineer" "Remote Anywhere" {today_str}', "domains": ats_domains},
+        {"category": "REMOTE_GLOBAL", "query": '("DevOps" OR "Site Reliability Engineer") "Remote Worldwide" -salesforce -apex', "domains": ats_domains},
+        {"category": "REMOTE_GLOBAL", "query": '("Cloud Engineer" OR "Infrastructure Engineer") "Remote" "Terraform" -salesforce', "domains": ats_domains},
         
-        # Visa Sponsor Searches (Targeting Stable Regions)
-        {"category": "VISA_SPONSOR", "query": f'"DevOps" "visa sponsorship" Europe {today_str}', "domains": None},
-        {"category": "VISA_SPONSOR", "query": f'"Cloud Engineer" "relocation" Switzerland OR Netherlands OR Sweden OR Australia {today_str}', "domains": None}
+        # Visa Sponsor Searches
+        {"category": "VISA_SPONSOR", "query": '("DevOps" OR "Cloud Engineer") "visa sponsorship" (Europe OR UK OR Singapore)', "domains": None},
+        {"category": "VISA_SPONSOR", "query": '("DevOps" OR "SRE") "relocation allowance" (Netherlands OR Australia OR Switzerland)', "domains": None}
     ]
     
     job_data = {"REMOTE_GLOBAL": [], "VISA_SPONSOR": []}
-    print(f"🔎 Searching direct job apply links (Past 24 Hours) for {today_str}...")
+    print("🔎 Searching direct job apply links (Past 24 Hours)...")
     
     for cfg in search_configs:
         results = search_tavily(cfg["query"], cfg["domains"])
@@ -165,13 +165,21 @@ def send_telegram(text):
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    
+    # Mencoba kirim pakai Markdown terlebih dahulu
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
-        "disable_web_page_preview": True
+        "disable_web_page_preview": True,
+        "parse_mode": "Markdown"
     }
     
     res = requests.post(url, json=payload, timeout=10)
+    if res.status_code != 200:
+        # Fallback kirim plain text jika ada parsing error
+        payload.pop("parse_mode", None)
+        res = requests.post(url, json=payload, timeout=10)
+
     if res.status_code == 200:
         print("🚀 Direct Job Digest successfully sent to Telegram!")
     else:
