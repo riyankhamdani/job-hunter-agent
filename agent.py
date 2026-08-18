@@ -2,10 +2,10 @@ import os
 import sys
 import requests
 from datetime import datetime
-from langchain_groq import ChatGroq
+from google import genai
 
 # Credentials
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -29,7 +29,7 @@ def search_tavily(query, domains=None):
         "api_key": TAVILY_API_KEY,
         "query": query,
         "topic": "general",
-        "days": 1,                   # DIKUNCI 1 HARI (24 JAM TERAKHIR)
+        "days": 1,
         "max_results": 7,
         "search_depth": "advanced"
     }
@@ -52,7 +52,6 @@ def search_tavily(query, domains=None):
             for r in results:
                 link = r.get("url", "")
                 
-                # Validasi link agar tidak mengambil katalog search atau link query seperti Indeed
                 if domains:
                     is_valid = any(domain in link for domain in allowed_domains)
                 else:
@@ -60,7 +59,7 @@ def search_tavily(query, domains=None):
                         len(link.split("/")) > 3 
                         and not link.endswith("/jobs") 
                         and not link.endswith("/search")
-                        and "q-" not in link  # Mencegah link search query Indeed
+                        and "q-" not in link
                     )
 
                 if is_valid:
@@ -77,19 +76,14 @@ def search_tavily(query, domains=None):
         return []
 
 def get_job_postings():
-    # Menghapus penguncian bulan/tahun agar hasil tidak monoton di cache Tavily
     ats_domains = [
         "boards.greenhouse.io", "job-boards.greenhouse.io", 
         "jobs.lever.co", "apply.workable.com", "ashbyhq.com", "jobs.smartrecruiters.com"
     ]
     
-    # Query dibuat fleksibel + membuang kata kunci "-salesforce -apex"
     search_configs = [
-        # Remote Searches
         {"category": "REMOTE_GLOBAL", "query": '("DevOps" OR "Site Reliability Engineer") "Remote Worldwide" -salesforce -apex', "domains": ats_domains},
         {"category": "REMOTE_GLOBAL", "query": '("Cloud Engineer" OR "Infrastructure Engineer") "Remote" "Terraform" -salesforce', "domains": ats_domains},
-        
-        # Visa Sponsor Searches
         {"category": "VISA_SPONSOR", "query": '("DevOps" OR "Cloud Engineer") "visa sponsorship" (Europe OR UK OR Singapore)', "domains": None},
         {"category": "VISA_SPONSOR", "query": '("DevOps" OR "SRE") "relocation allowance" (Netherlands OR Australia OR Switzerland)', "domains": None}
     ]
@@ -108,12 +102,13 @@ def get_job_postings():
         
     return job_data
 
-def summarize_with_groq(job_data):
-    if not GROQ_API_KEY:
-        return "❌ Error: GROQ_API_KEY tidak dikonfigurasi."
+def summarize_with_gemini(job_data):
+    if not GEMINI_API_KEY:
+        print("❌ Error: GEMINI_API_KEY tidak dikonfigurasi.")
+        return None
 
-    print("🤖 AI formatting direct job apply links...")
-    llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0.1, api_key=GROQ_API_KEY)
+    print("🤖 AI formatting direct job apply links with Gemini...")
+    client = genai.Client(api_key=GEMINI_API_KEY)
     
     prompt = f"""
     You are an Executive Career Agent for Riyan.
@@ -153,20 +148,22 @@ def summarize_with_groq(job_data):
     """
     
     try:
-        report = llm.invoke(prompt).content
-        return report
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=prompt,
+        )
+        return response.text
     except Exception as e:
-        print(f"Summarizer Error: {e}")
-        return "Gagal membuat daftar lowongan kerja hari ini."
+        print(f"❌ Summarizer Error: {e}")
+        return None  # Kembalikan None agar tidak terkirim pesan error ke Telegram
 
 def send_telegram(text):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("❌ Telegram credentials missing!")
-        return
+        return False
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     
-    # Mencoba kirim pakai Markdown terlebih dahulu
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
@@ -176,16 +173,24 @@ def send_telegram(text):
     
     res = requests.post(url, json=payload, timeout=10)
     if res.status_code != 200:
-        # Fallback kirim plain text jika ada parsing error
         payload.pop("parse_mode", None)
         res = requests.post(url, json=payload, timeout=10)
 
     if res.status_code == 200:
         print("🚀 Direct Job Digest successfully sent to Telegram!")
+        return True
     else:
         print(f"❌ Telegram Send Failed: {res.text}")
+        return False
 
 if __name__ == "__main__":
     raw_jobs = get_job_postings()
-    summary = summarize_with_groq(raw_jobs)
-    send_telegram(summary)
+    summary = summarize_with_gemini(raw_jobs)
+    
+    if summary:
+        success = send_telegram(summary)
+        if not success:
+            sys.exit(1)
+    else:
+        print("❌ Gagal membuat rangkuman lowongan kerja. Tidak ada pesan terkirim ke Telegram.")
+        sys.exit(1)
