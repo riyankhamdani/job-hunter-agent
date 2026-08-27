@@ -192,7 +192,7 @@ def summarize_with_gemini(job_data):
 
   try:
     response = client.models.generate_content(
-        model="gemini-2.5-flash",  # Fixed: Menggunakan model resmi yang aktif & stabil
+        model="gemini-3.6-flash",  # Update ke model aktif
         contents=prompt,
     )
     return response.text
@@ -217,7 +217,6 @@ def send_telegram(text):
 
   res = requests.post(url, json=payload, timeout=10)
 
-  # Fallback kalau ada error sintaks Markdown dari LLM
   if res.status_code != 200:
     print(f"⚠️ Telegram Markdown Error: {res.text}. Retrying plain text...")
     payload.pop("parse_mode", None)
