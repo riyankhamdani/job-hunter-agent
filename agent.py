@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 import os
 import sys
 from google import genai
@@ -10,6 +11,8 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+SEEN_URLS_FILE = "seen_urls.json"
+
 CANDIDATE_PROFILE = """
 Candidate Name: Muchamat Riyan Khamdani
 Education: Bachelor of Applied Science in Internet Engineering Technology (UGM)
@@ -18,6 +21,26 @@ Tech Stack: AWS, GCP, Alibaba Cloud (ACA Certified), Terraform, Ansible, Docker,
 Target Roles: Cloud Engineer, DevOps Engineer, Site Reliability Engineer (SRE), Infrastructure Engineer.
 Preferences: Fully Remote Worldwide, OR Onsite with Visa Sponsorship/Relocation in Stable Countries.
 """
+
+
+def load_seen_urls():
+  """Membaca riwayat URL yang pernah dikirim."""
+  if os.path.exists(SEEN_URLS_FILE):
+    try:
+      with open(SEEN_URLS_FILE, "r") as f:
+        return set(json.load(f))
+    except Exception as e:
+      print(f"⚠️ Gagal membaca {SEEN_URLS_FILE}: {e}")
+  return set()
+
+
+def save_seen_urls(seen_urls):
+  """Menyimpan riwayat URL baru ke file JSON."""
+  try:
+    with open(SEEN_URLS_FILE, "w") as f:
+      json.dump(list(seen_urls), f, indent=2)
+  except Exception as e:
+    print(f"⚠️ Gagal menyimpan {SEEN_URLS_FILE}: {e}")
 
 
 def search_tavily(query, domains=None):
@@ -31,7 +54,7 @@ def search_tavily(query, domains=None):
       "query": query,
       "topic": "general",
       "days": 1,
-      "max_results": 7,
+      "max_results": 20,  # Ditingkatkan dari 7 ke 20 agar punya banyak cadangan lowongan baru
       "search_depth": "advanced",
   }
 
@@ -82,7 +105,7 @@ def search_tavily(query, domains=None):
     return []
 
 
-def get_job_postings():
+def get_job_postings(seen_urls):
   ats_domains = [
       "boards.greenhouse.io",
       "job-boards.greenhouse.io",
@@ -128,17 +151,24 @@ def get_job_postings():
   ]
 
   job_data = {"REMOTE_GLOBAL": [], "VISA_SPONSOR": []}
-  print("🔎 Searching direct job apply links (Past 24 Hours)...")
+  print("🔎 Searching direct job apply links (Filtering duplicates)...")
 
   for cfg in search_configs:
     results = search_tavily(cfg["query"], cfg["domains"])
     for item in results:
+      url = item["url"]
+
+      # SKIP jika URL sudah pernah dikirim di hari-hari sebelumnya
+      if url in seen_urls:
+        continue
+
+      # SKIP jika URL duplikat di eksekusi saat ini
       if not any(
-          existing["url"] == item["url"]
-          for existing in job_data[cfg["category"]]
+          existing["url"] == url for existing in job_data[cfg["category"]]
       ):
         job_data[cfg["category"]].append(item)
 
+  # Ambil maksimal 4 lowongan baru per kategori
   job_data["REMOTE_GLOBAL"] = job_data["REMOTE_GLOBAL"][:4]
   job_data["VISA_SPONSOR"] = job_data["VISA_SPONSOR"][:4]
 
@@ -148,6 +178,11 @@ def get_job_postings():
 def summarize_with_gemini(job_data):
   if not GEMINI_API_KEY:
     print("❌ Error: GEMINI_API_KEY tidak dikonfigurasi.")
+    return None
+
+  # Jika kedua kategori kosong setelah difilter
+  if not job_data["REMOTE_GLOBAL"] and not job_data["VISA_SPONSOR"]:
+    print("ℹ️ Tidak ada lowongan baru hari ini.")
     return None
 
   print("🤖 AI formatting direct job apply links with Gemini...")
@@ -168,7 +203,7 @@ def summarize_with_gemini(job_data):
        - 🌐 **LOWONGAN REMOTE GLOBAL (24 JAM TERAKHIR)**
        - ✈️ **LOWONGAN VISA SPONSOR / RELOKASI (NEGARA STABIL)**
     2. Filter out any job from geopolitically unstable countries.
-    3. If VISA_SPONSOR has results, present them clearly. If VISA_SPONSOR is truly empty, write: "Belum ada update visa sponsor baru dalam 24 jam terakhir dari negara target."
+    3. If VISA_SPONSOR or REMOTE_GLOBAL has no results in RAW JOB DATA, write: "Belum ada update lowongan baru hari ini." for that section.
     4. For each valid job, output ONLY:
        - Bold Job Title & Company Name
        - 1 short sentence summarizing key requirements/tech stack matching Riyan
@@ -192,8 +227,7 @@ def summarize_with_gemini(job_data):
 
   try:
     response = client.models.generate_content(
-        model="gemini-3.6-flash",  # Update ke model aktif
-        contents=prompt,
+        model="gemini-2.5-flash", contents=prompt
     )
     return response.text
   except Exception as e:
@@ -231,16 +265,23 @@ def send_telegram(text):
 
 
 if __name__ == "__main__":
-  raw_jobs = get_job_postings()
+  seen_urls = load_seen_urls()
+  raw_jobs = get_job_postings(seen_urls)
+
   summary = summarize_with_gemini(raw_jobs)
 
   if summary:
     success = send_telegram(summary)
-    if not success:
+    if success:
+      # Kumpulkan semua URL baru yang dikirim hari ini lalu simpan ke file
+      new_sent_urls = [
+          job["url"]
+          for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]
+          for job in raw_jobs[cat]
+      ]
+      seen_urls.update(new_sent_urls)
+      save_seen_urls(seen_urls)
+    else:
       sys.exit(1)
   else:
-    print(
-        "❌ Gagal membuat rangkuman lowongan kerja. Tidak ada pesan terkirim ke"
-        " Telegram."
-    )
-    sys.exit(1)
+    print("ℹ️ Tidak ada pesan terkirim karena tidak ada lowongan baru.")
