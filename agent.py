@@ -17,178 +17,174 @@ CANDIDATE_PROFILE = """
 Candidate Name: Muchamat Riyan Khamdani
 Education: Bachelor of Applied Science in Internet Engineering Technology (UGM)
 Current Role: Cloud Engineer at Izeno (Prev: L2 Cloud Engineer at Datacomm Diangraha)
-Tech Stack: AWS, GCP, Alibaba Cloud (ACA Certified), Terraform, Ansible, Docker, Kubernetes, Jenkins, Bamboo, Grafana, PostgreSQL, MySQL, VMware vSphere, NSX-T, Zerto.
+Tech Stack: AWS, GCP, Alibaba Cloud (ACA Certified), Terraform, Ansible, Docker, Podman, OpenShift, Kubernetes (GKE), AI Agents, LLM, Jenkins, Bamboo, Grafana, PostgreSQL, MySQL, Oracle, VMware vSphere, NSX-T, Zerto.
 Target Roles: Cloud Engineer, DevOps Engineer, Site Reliability Engineer (SRE), Infrastructure Engineer.
 Preferences: Fully Remote Worldwide, OR Onsite with Visa Sponsorship/Relocation in Stable Countries.
 """
 
 
 def load_seen_urls():
-  """Membaca riwayat URL yang pernah dikirim."""
-  if os.path.exists(SEEN_URLS_FILE):
-    try:
-      with open(SEEN_URLS_FILE, "r") as f:
-        return set(json.load(f))
-    except Exception as e:
-      print(f"⚠️ Gagal membaca {SEEN_URLS_FILE}: {e}")
-  return set()
+    """Membaca riwayat URL yang pernah dikirim."""
+    if os.path.exists(SEEN_URLS_FILE):
+        try:
+            with open(SEEN_URLS_FILE, "r") as f:
+                return set(json.load(f))
+        except Exception as e:
+            print(f"⚠️ Gagal membaca {SEEN_URLS_FILE}: {e}")
+    return set()
 
 
 def save_seen_urls(seen_urls):
-  """Menyimpan riwayat URL baru ke file JSON."""
-  try:
-    with open(SEEN_URLS_FILE, "w") as f:
-      json.dump(list(seen_urls), f, indent=2)
-  except Exception as e:
-    print(f"⚠️ Gagal menyimpan {SEEN_URLS_FILE}: {e}")
+    """Menyimpan riwayat URL baru ke file JSON."""
+    try:
+        with open(SEEN_URLS_FILE, "w") as f:
+            json.dump(list(seen_urls), f, indent=2)
+    except Exception as e:
+        print(f"⚠️ Gagal menyimpan {SEEN_URLS_FILE}: {e}")
 
 
 def search_tavily(query, domains=None):
-  if not TAVILY_API_KEY:
-    print("⚠️ Warning: TAVILY_API_KEY tidak ditemukan.")
-    return []
+    if not TAVILY_API_KEY:
+        print("⚠️ Warning: TAVILY_API_KEY tidak ditemukan.")
+        return []
 
-  url = "https://api.tavily.com/search"
-  payload = {
-      "api_key": TAVILY_API_KEY,
-      "query": query,
-      "topic": "general",
-      "days": 1,
-      "max_results": 20,  # Ditingkatkan dari 7 ke 20 agar punya banyak cadangan lowongan baru
-      "search_depth": "advanced",
-  }
+    url = "https://api.tavily.com/search"
+    payload = {
+        "api_key": TAVILY_API_KEY,
+        "query": query,
+        "topic": "general",
+        "days": 1,
+        "max_results": 20,
+        "search_depth": "advanced",
+    }
 
-  if domains:
-    payload["include_domains"] = domains
+    if domains:
+        payload["include_domains"] = domains
 
-  try:
-    response = requests.post(url, json=payload, timeout=15)
-    if response.status_code == 200:
-      results = response.json().get("results", [])
-      valid_jobs = []
+    try:
+        response = requests.post(url, json=payload, timeout=15)
+        if response.status_code == 200:
+            results = response.json().get("results", [])
+            valid_jobs = []
 
-      allowed_domains = [
-          "greenhouse.io",
-          "jobs.lever.co",
-          "apply.workable.com",
-          "jobs.smartrecruiters.com",
-          "ashbyhq.com",
-          "linkedin.com/jobs/view",
-          "hatch.co",
-          "bamboohr.com",
-      ]
+            allowed_domains = [
+                "greenhouse.io",
+                "jobs.lever.co",
+                "apply.workable.com",
+                "jobs.smartrecruiters.com",
+                "ashbyhq.com",
+                "linkedin.com/jobs/view",
+                "hatch.co",
+                "bamboohr.com",
+            ]
 
-      for r in results:
-        link = r.get("url", "")
+            for r in results:
+                link = r.get("url", "")
 
-        if domains:
-          is_valid = any(domain in link for domain in allowed_domains)
-        else:
-          is_valid = (
-              len(link.split("/")) > 3
-              and not link.endswith("/jobs")
-              and not link.endswith("/search")
-              and "q-" not in link
-          )
+                if domains:
+                    is_valid = any(domain in link for domain in allowed_domains)
+                else:
+                    is_valid = (
+                        len(link.split("/")) > 3
+                        and not link.endswith("/jobs")
+                        and not link.endswith("/search")
+                        and "q-" not in link
+                    )
 
-        if is_valid:
-          valid_jobs.append({
-              "title": r.get("title", "Job Posting"),
-              "url": link,
-              "snippet": r.get("content", "")[:300],
-          })
+                if is_valid:
+                    valid_jobs.append({
+                        "title": r.get("title", "Job Posting"),
+                        "url": link,
+                        "snippet": r.get("content", "")[:300],
+                    })
 
-      return valid_jobs
-    return []
-  except Exception as e:
-    print(f"❌ Error searching '{query}': {e}")
-    return []
+            return valid_jobs
+        return []
+    except Exception as e:
+        print(f"❌ Error searching '{query}': {e}")
+        return []
 
 
 def get_job_postings(seen_urls):
-  ats_domains = [
-      "boards.greenhouse.io",
-      "job-boards.greenhouse.io",
-      "jobs.lever.co",
-      "apply.workable.com",
-      "ashbyhq.com",
-      "jobs.smartrecruiters.com",
-  ]
+    ats_domains = [
+        "boards.greenhouse.io",
+        "job-boards.greenhouse.io",
+        "jobs.lever.co",
+        "apply.workable.com",
+        "ashbyhq.com",
+        "jobs.smartrecruiters.com",
+    ]
 
-  search_configs = [
-      {
-          "category": "REMOTE_GLOBAL",
-          "query": (
-              '("DevOps" OR "Site Reliability Engineer") "Remote Worldwide"'
-              " -salesforce -apex"
-          ),
-          "domains": ats_domains,
-      },
-      {
-          "category": "REMOTE_GLOBAL",
-          "query": (
-              '("Cloud Engineer" OR "Infrastructure Engineer") "Remote"'
-              ' "Terraform" -salesforce'
-          ),
-          "domains": ats_domains,
-      },
-      {
-          "category": "VISA_SPONSOR",
-          "query": (
-              '("DevOps" OR "Cloud Engineer") "visa sponsorship" (Europe OR UK'
-              " OR Singapore)"
-          ),
-          "domains": None,
-      },
-      {
-          "category": "VISA_SPONSOR",
-          "query": (
-              '("DevOps" OR "SRE") "relocation allowance" (Netherlands OR'
-              " Australia OR Switzerland)"
-          ),
-          "domains": None,
-      },
-  ]
+    search_configs = [
+        {
+            "category": "REMOTE_GLOBAL",
+            "query": (
+                '("DevOps" OR "Site Reliability Engineer" OR "Kubernetes") "Remote Worldwide"'
+                " -salesforce -apex"
+            ),
+            "domains": ats_domains,
+        },
+        {
+            "category": "REMOTE_GLOBAL",
+            "query": (
+                '("Cloud Engineer" OR "Infrastructure Engineer") "Remote"'
+                ' ("Terraform" OR "GKE" OR "OpenShift") -salesforce'
+            ),
+            "domains": ats_domains,
+        },
+        {
+            "category": "VISA_SPONSOR",
+            "query": (
+                '("DevOps" OR "Cloud Engineer" OR "SRE") "visa sponsorship" (Europe OR UK'
+                " OR Japan OR Singapore)"
+            ),
+            "domains": None,
+        },
+        {
+            "category": "VISA_SPONSOR",
+            "query": (
+                '("DevOps" OR "SRE" OR "Platform Engineer") "relocation" (Netherlands OR'
+                " Japan OR Switzerland OR Germany)"
+            ),
+            "domains": None,
+        },
+    ]
 
-  job_data = {"REMOTE_GLOBAL": [], "VISA_SPONSOR": []}
-  print("🔎 Searching direct job apply links (Filtering duplicates)...")
+    job_data = {"REMOTE_GLOBAL": [], "VISA_SPONSOR": []}
+    print("🔎 Searching direct job apply links (Filtering duplicates)...")
 
-  for cfg in search_configs:
-    results = search_tavily(cfg["query"], cfg["domains"])
-    for item in results:
-      url = item["url"]
+    for cfg in search_configs:
+        results = search_tavily(cfg["query"], cfg["domains"])
+        for item in results:
+            url = item["url"]
 
-      # SKIP jika URL sudah pernah dikirim di hari-hari sebelumnya
-      if url in seen_urls:
-        continue
+            if url in seen_urls:
+                continue
 
-      # SKIP jika URL duplikat di eksekusi saat ini
-      if not any(
-          existing["url"] == url for existing in job_data[cfg["category"]]
-      ):
-        job_data[cfg["category"]].append(item)
+            if not any(
+                existing["url"] == url for existing in job_data[cfg["category"]]
+            ):
+                job_data[cfg["category"]].append(item)
 
-  # Ambil maksimal 4 lowongan baru per kategori
-  job_data["REMOTE_GLOBAL"] = job_data["REMOTE_GLOBAL"][:4]
-  job_data["VISA_SPONSOR"] = job_data["VISA_SPONSOR"][:4]
+    job_data["REMOTE_GLOBAL"] = job_data["REMOTE_GLOBAL"][:4]
+    job_data["VISA_SPONSOR"] = job_data["VISA_SPONSOR"][:4]
 
-  return job_data
+    return job_data
 
 
 def summarize_with_gemini(job_data):
-  if not GEMINI_API_KEY:
-    print("❌ Error: GEMINI_API_KEY tidak dikonfigurasi.")
-    return None
+    if not GEMINI_API_KEY:
+        print("❌ Error: GEMINI_API_KEY tidak dikonfigurasi.")
+        return None
 
-  # Jika kedua kategori kosong setelah difilter
-  if not job_data["REMOTE_GLOBAL"] and not job_data["VISA_SPONSOR"]:
-    print("ℹ️ Tidak ada lowongan baru hari ini.")
-    return None
+    if not job_data["REMOTE_GLOBAL"] and not job_data["VISA_SPONSOR"]:
+        print("ℹ️ Tidak ada lowongan baru hari ini.")
+        return None
 
-  print("🤖 AI formatting direct job apply links with Gemini...")
-  client = genai.Client(api_key=GEMINI_API_KEY)
+    print("🤖 AI formatting direct job apply links with Gemini...")
+    client = genai.Client(api_key=GEMINI_API_KEY)
 
-  prompt = f"""
+    prompt = f"""
     You are an Executive Career Agent for Riyan.
     Summarize these specific job postings in Bahasa Indonesia matching Riyan's profile.
 
@@ -225,63 +221,62 @@ def summarize_with_gemini(job_data):
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
     """
 
-  try:
-    response = client.models.generate_content(
-        model="gemini-2.5-flash", contents=prompt
-    )
-    return response.text
-  except Exception as e:
-    print(f"❌ Summarizer Error: {e}")
-    return None
+    try:
+        response = client.models.generate_content(
+            model="gemini-1.5-flash", contents=prompt
+        )
+        return response.text
+    except Exception as e:
+        print(f"❌ Summarizer Error: {e}")
+        return None
 
 
 def send_telegram(text):
-  if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-    print("❌ Telegram credentials missing!")
-    return False
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("❌ Telegram credentials missing!")
+        return False
 
-  url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
-  payload = {
-      "chat_id": TELEGRAM_CHAT_ID,
-      "text": text,
-      "disable_web_page_preview": True,
-      "parse_mode": "Markdown",
-  }
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "disable_web_page_preview": True,
+        "parse_mode": "Markdown",
+    }
 
-  res = requests.post(url, json=payload, timeout=10)
-
-  if res.status_code != 200:
-    print(f"⚠️ Telegram Markdown Error: {res.text}. Retrying plain text...")
-    payload.pop("parse_mode", None)
     res = requests.post(url, json=payload, timeout=10)
 
-  if res.status_code == 200:
-    print("🚀 Direct Job Digest successfully sent to Telegram!")
-    return True
-  else:
-    print(f"❌ Telegram Send Failed: {res.text}")
-    return False
+    if res.status_code != 200:
+        print(f"⚠️ Telegram Markdown Error: {res.text}. Retrying plain text...")
+        payload.pop("parse_mode", None)
+        res = requests.post(url, json=payload, timeout=10)
+
+    if res.status_code == 200:
+        print("🚀 Direct Job Digest successfully sent to Telegram!")
+        return True
+    else:
+        print(f"❌ Telegram Send Failed: {res.text}")
+        return False
 
 
 if __name__ == "__main__":
-  seen_urls = load_seen_urls()
-  raw_jobs = get_job_postings(seen_urls)
+    seen_urls = load_seen_urls()
+    raw_jobs = get_job_postings(seen_urls)
 
-  summary = summarize_with_gemini(raw_jobs)
+    summary = summarize_with_gemini(raw_jobs)
 
-  if summary:
-    success = send_telegram(summary)
-    if success:
-      # Kumpulkan semua URL baru yang dikirim hari ini lalu simpan ke file
-      new_sent_urls = [
-          job["url"]
-          for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]
-          for job in raw_jobs[cat]
-      ]
-      seen_urls.update(new_sent_urls)
-      save_seen_urls(seen_urls)
+    if summary:
+        success = send_telegram(summary)
+        if success:
+            new_sent_urls = [
+                job["url"]
+                for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]
+                for job in raw_jobs[cat]
+            ]
+            seen_urls.update(new_sent_urls)
+            save_seen_urls(seen_urls)
+        else:
+            sys.exit(1)
     else:
-      sys.exit(1)
-  else:
-    print("ℹ️ Tidak ada pesan terkirim karena tidak ada lowongan baru.")
+        print("ℹ️ Tidak ada pesan terkirim karena tidak ada lowongan baru.")
