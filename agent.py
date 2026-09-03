@@ -2,6 +2,7 @@ from datetime import datetime
 import json
 import os
 import sys
+import time
 from google import genai
 import requests
 
@@ -172,7 +173,7 @@ def get_job_postings(seen_urls):
     return job_data
 
 
-def summarize_with_gemini(job_data):
+def summarize_with_gemini(job_data, retries=3, initial_delay=5):
     if not GEMINI_API_KEY:
         print("❌ Error: GEMINI_API_KEY tidak dikonfigurasi.")
         return None
@@ -221,14 +222,21 @@ def summarize_with_gemini(job_data):
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
     """
 
-    try:
-        response = client.models.generate_content(
-            model="gemini-3.6-flash", contents=prompt
-        )
-        return response.text
-    except Exception as e:
-        print(f"❌ Summarizer Error: {e}")
-        return None
+    delay = initial_delay
+    for attempt in range(1, retries + 1):
+        try:
+            # Menggunakan model valid gemini-2.5-flash
+            response = client.models.generate_content(
+                model="gemini-2.5-flash", contents=prompt
+            )
+            return response.text
+        except Exception as e:
+            print(f"⚠️ Retry {attempt}/{retries} - Summarizer Error: {e}")
+            if attempt == retries:
+                print("❌ Gagal membuat rangkuman setelah beberapa kali percobaan.")
+                return None
+            time.sleep(delay)
+            delay *= 2
 
 
 def send_telegram(text):
