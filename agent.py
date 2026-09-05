@@ -225,10 +225,9 @@ def summarize_with_gemini(job_data, retries=3, initial_delay=5):
     delay = initial_delay
     for attempt in range(1, retries + 1):
         try:
-            # Menggunakan model valid gemini-2.5-flash
-            response = client.models.generate_content(
-                model="gemini-2.5-flash", contents=prompt
-            )
+            # Gunakan Chat Session untuk menghindari warning AFC dan panggil gemini-3.6-flash
+            chat = client.chats.create(model="gemini-3.6-flash")
+            response = chat.send_message(prompt)
             return response.text
         except Exception as e:
             print(f"⚠️ Retry {attempt}/{retries} - Summarizer Error: {e}")
