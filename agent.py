@@ -225,7 +225,7 @@ def summarize_with_gemini(job_data, retries=3, initial_delay=5):
     delay = initial_delay
     for attempt in range(1, retries + 1):
         try:
-            # Gunakan Chat Session untuk menghindari warning AFC dan panggil gemini-3.6-flash
+            # Menggunakan Chat Session dan model gemini-3.6-flash untuk menghilangkan error 404 & AFC Warning
             chat = client.chats.create(model="gemini-3.6-flash")
             response = chat.send_message(prompt)
             return response.text
