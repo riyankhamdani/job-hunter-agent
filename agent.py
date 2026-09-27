@@ -44,6 +44,41 @@ def save_seen_urls(seen_urls):
         print(f"⚠️ Gagal menyimpan {SEEN_URLS_FILE}: {e}")
 
 
+def is_job_active(url):
+    """
+    Mengecek apakah URL lowongan masih aktif (HTTP 200)
+    dan tidak berisi teks bahwa pendaftaran sudah ditutup.
+    """
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=5, allow_redirects=True)
+        
+        # 1. Cek HTTP status code
+        if response.status_code != 200:
+            return False
+            
+        # 2. Cek keyword lowongan sudah ditutup
+        expired_keywords = [
+            "no longer accepting applications",
+            "job has expired",
+            "position has been filled",
+            "this job is closed",
+            "page not found",
+            "404 not found",
+            "this role is no longer available"
+        ]
+        
+        content_lower = response.text.lower()
+        if any(keyword in content_lower for keyword in expired_keywords):
+            return False
+            
+        return True
+    except Exception:
+        return False
+
+
 def search_tavily(query, domains=None):
     if not TAVILY_API_KEY:
         print("⚠️ Warning: TAVILY_API_KEY tidak ditemukan.")
@@ -54,7 +89,7 @@ def search_tavily(query, domains=None):
         "api_key": TAVILY_API_KEY,
         "query": query,
         "topic": "general",
-        "days": 1,
+        "days": 1,  # Filter ketat 24 jam terakhir
         "max_results": 20,
         "search_depth": "advanced",
     }
@@ -93,11 +128,15 @@ def search_tavily(query, domains=None):
                     )
 
                 if is_valid:
-                    valid_jobs.append({
-                        "title": r.get("title", "Job Posting"),
-                        "url": link,
-                        "snippet": r.get("content", "")[:300],
-                    })
+                    # Validasi live HTTP & status penutupan lowongan
+                    if is_job_active(link):
+                        valid_jobs.append({
+                            "title": r.get("title", "Job Posting"),
+                            "url": link,
+                            "snippet": r.get("content", "")[:300],
+                        })
+                    else:
+                        print(f"⏩ Skipping closed/expired job: {link}")
 
             return valid_jobs
         return []
@@ -152,7 +191,7 @@ def get_job_postings(seen_urls):
     ]
 
     job_data = {"REMOTE_GLOBAL": [], "VISA_SPONSOR": []}
-    print("🔎 Searching direct job apply links (Filtering duplicates)...")
+    print("🔎 Searching direct job apply links (Filtering duplicates & checking active status)...")
 
     for cfg in search_configs:
         results = search_tavily(cfg["query"], cfg["domains"])
@@ -225,7 +264,6 @@ def summarize_with_gemini(job_data, retries=3, initial_delay=5):
     delay = initial_delay
     for attempt in range(1, retries + 1):
         try:
-            # Menggunakan Chat Session dan model gemini-3.6-flash untuk menghilangkan error 404 & AFC Warning
             chat = client.chats.create(model="gemini-3.6-flash")
             response = chat.send_message(prompt)
             return response.text
