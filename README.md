@@ -39,12 +39,13 @@ Below is an actual daily digest delivered by the agent directly to Telegram:
   Peluang karir DevOps Engineer di Inggris (London dan Belfast) dengan dukungan penuh UK Visa Sponsorship.
   🔗 Apply disini: https://huntukvisasponsors.com/jobs/role/devops-engineer
 
----
-
-
 🏗️ Architecture & Tech Stack
 LLM Engine: Google Gemini API (google-genai Python SDK)
+
 Search & Scraping: Tavily Search API (ATS Domain Filtered: Greenhouse, Lever, Workable, SmartRecruiters)
+
 Orchestration: GitHub Actions (job_agent.yml)
+
 Notification: Telegram Bot API
+
 Language: Python 3.11+
