@@ -1,10 +1,12 @@
 from datetime import datetime
 import json
 import os
+import random
 import sys
 import time
-from google import genai
 import requests
+from google import genai
+from google.genai import errors
 
 # Credentials
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -13,6 +15,22 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 SEEN_URLS_FILE = "seen_urls.json"
+
+# Blacklist domain spam/forum/aggregator kotor yang bikin lambat
+EXCLUDED_DOMAINS = [
+    "reddit.com",
+    "instagram.com",
+    "facebook.com",
+    "twitter.com",
+    "x.com",
+    "jaabz.com",
+    "bookdomits.com",
+    "ziprecruiter.com",
+    "seek.com",
+    "roberthalf.com",
+    "youtube.com",
+    "tiktok.com",
+]
 
 CANDIDATE_PROFILE = """
 Candidate Name: Muchamat Riyan Khamdani
@@ -51,14 +69,17 @@ def is_job_active(url):
     """
     try:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
         }
         response = requests.get(url, headers=headers, timeout=5, allow_redirects=True)
-        
+
         # 1. Cek HTTP status code
         if response.status_code != 200:
             return False
-            
+
         # 2. Cek keyword lowongan sudah ditutup
         expired_keywords = [
             "no longer accepting applications",
@@ -67,13 +88,13 @@ def is_job_active(url):
             "this job is closed",
             "page not found",
             "404 not found",
-            "this role is no longer available"
+            "this role is no longer available",
         ]
-        
+
         content_lower = response.text.lower()
         if any(keyword in content_lower for keyword in expired_keywords):
             return False
-            
+
         return True
     except Exception:
         return False
@@ -116,6 +137,10 @@ def search_tavily(query, domains=None):
 
             for r in results:
                 link = r.get("url", "")
+
+                # Early exclusion check (filter domain kotor sebelum hit HTTP)
+                if any(bad_domain in link.lower() for bad_domain in EXCLUDED_DOMAINS):
+                    continue
 
                 if domains:
                     is_valid = any(domain in link for domain in allowed_domains)
@@ -212,7 +237,7 @@ def get_job_postings(seen_urls):
     return job_data
 
 
-def summarize_with_gemini(job_data, retries=3, initial_delay=5):
+def summarize_with_gemini(job_data, retries=3):
     if not GEMINI_API_KEY:
         print("❌ Error: GEMINI_API_KEY tidak dikonfigurasi.")
         return None
@@ -261,19 +286,33 @@ def summarize_with_gemini(job_data, retries=3, initial_delay=5):
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
     """
 
-    delay = initial_delay
-    for attempt in range(1, retries + 1):
-        try:
-            chat = client.chats.create(model="gemini-3.6-flash")
-            response = chat.send_message(prompt)
-            return response.text
-        except Exception as e:
-            print(f"⚠️ Retry {attempt}/{retries} - Summarizer Error: {e}")
-            if attempt == retries:
-                print("❌ Gagal membuat rangkuman setelah beberapa kali percobaan.")
-                return None
-            time.sleep(delay)
-            delay *= 2
+    # Model fallback list jika salah satu sedang high traffic
+    models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash"]
+
+    for model_name in models_to_try:
+        print(f"🔄 Trying model: {model_name}...")
+        for attempt in range(1, retries + 1):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                )
+                return response.text
+            except errors.APIError as e:
+                # Handle 503 / 429 Rate limits dengan Exponential Backoff + Jitter
+                wait_time = (2 ** attempt) + random.uniform(1, 3)
+                print(f"⚠️ Retry {attempt}/{retries} - [{model_name}] API Error: {e.message}")
+                if attempt == retries:
+                    print(f"⚠️ Model {model_name} gagal, mencoba model alternatif...")
+                    break
+                print(f"⏳ Menunggu {wait_time:.1f} detik sebelum mencoba lagi...")
+                time.sleep(wait_time)
+            except Exception as e:
+                print(f"❌ Error tak terduga pada {model_name}: {e}")
+                break
+
+    print("❌ Gagal membuat rangkuman setelah beberapa kali percobaan dengan seluruh model.")
+    return None
 
 
 def send_telegram(text):
