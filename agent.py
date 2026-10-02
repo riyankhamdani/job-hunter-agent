@@ -59,7 +59,7 @@ def save_seen_urls(seen_urls):
         with open(SEEN_URLS_FILE, "w") as f:
             json.dump(list(seen_urls), f, indent=2)
     except Exception as e:
-        print(f"⚠️️ Gagal menyimpan {SEEN_URLS_FILE}: {e}")
+        print(f"⚠️ Gagal menyimpan {SEEN_URLS_FILE}: {e}")
 
 
 def is_job_active(url):
@@ -280,14 +280,14 @@ def summarize_with_gemini(job_data, retries=3):
       [Ringkasan 1 kalimat syarat/tech stack]
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
 
-    ✈️️ **LOWONGAN VISA SPONSOR / RELOKASI**
+    ✈️ **LOWONGAN VISA SPONSOR / RELOKASI**
     • **[Judul Posisi - Perusahaan]**
       [Ringkasan 1 kalimat syarat/tech stack]
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
     """
 
-    # Model aktif terbaru di google-genai SDK
-    models_to_try = ["gemini-2.5-flash", "gemini-2.5-pro"]
+    # Model resmi sesuai rekomendasi Google API terbaru
+    models_to_try = ["gemini-3.8-flash"]
 
     for model_name in models_to_try:
         print(f"🔄 Trying model: {model_name}...")
