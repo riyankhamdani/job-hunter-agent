@@ -237,13 +237,13 @@ def get_job_postings(seen_urls):
     return job_data
 
 
-def summarize_with_gemini(job_data, retries=3):
+def summarize_with_gemini(job_data, retries=5):
     if not GEMINI_API_KEY:
         print("❌ Error: GEMINI_API_KEY tidak dikonfigurasi.")
         return None
 
     if not job_data["REMOTE_GLOBAL"] and not job_data["VISA_SPONSOR"]:
-        print("ℹ️ Tidak ada lowongan baru hari ini.")
+        print("ℹ️️ Tidak ada lowongan baru hari ini.")
         return None
 
     print("🤖 AI formatting direct job apply links with Gemini...")
@@ -280,14 +280,14 @@ def summarize_with_gemini(job_data, retries=3):
       [Ringkasan 1 kalimat syarat/tech stack]
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
 
-    ✈️ **LOWONGAN VISA SPONSOR / RELOKASI**
+    ✈️️ **LOWONGAN VISA SPONSOR / RELOKASI**
     • **[Judul Posisi - Perusahaan]**
       [Ringkasan 1 kalimat syarat/tech stack]
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
     """
 
-    # Menggunakan model terbaru gemini-3.8-flash
-    models_to_try = ["gemini-3.8-flash"]
+    # Primary model & Fallback model jika primary sedang high demand
+    models_to_try = ["gemini-3.8-flash", "gemini-2.5-pro"]
 
     for model_name in models_to_try:
         print(f"🔄 Trying model: {model_name}...")
@@ -299,10 +299,10 @@ def summarize_with_gemini(job_data, retries=3):
                 )
                 return response.text
             except errors.APIError as e:
-                wait_time = (2 ** attempt) + random.uniform(1, 3)
+                wait_time = (2 ** attempt) + random.uniform(2, 5)
                 print(f"⚠️ Retry {attempt}/{retries} - [{model_name}] API Error: {e.message}")
                 if attempt == retries:
-                    print(f"⚠️ Model {model_name} gagal, mencoba model alternatif...")
+                    print(f"⚠️ Model {model_name} gagal setelah {retries}x percobaan, mencoba model alternatif...")
                     break
                 print(f"⏳ Menunggu {wait_time:.1f} detik sebelum mencoba lagi...")
                 time.sleep(wait_time)
