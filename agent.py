@@ -286,7 +286,7 @@ def summarize_with_gemini(job_data, retries=3):
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
     """
 
-    # Model resmi sesuai rekomendasi Google API terbaru
+    # Menggunakan model terbaru gemini-3.8-flash
     models_to_try = ["gemini-3.8-flash"]
 
     for model_name in models_to_try:
