@@ -59,7 +59,7 @@ def save_seen_urls(seen_urls):
         with open(SEEN_URLS_FILE, "w") as f:
             json.dump(list(seen_urls), f, indent=2)
     except Exception as e:
-        print(f"⚠️ Gagal menyimpan {SEEN_URLS_FILE}: {e}")
+        print(f"⚠️️ Gagal menyimpan {SEEN_URLS_FILE}: {e}")
 
 
 def is_job_active(url):
@@ -280,14 +280,14 @@ def summarize_with_gemini(job_data, retries=3):
       [Ringkasan 1 kalimat syarat/tech stack]
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
 
-    ✈️ **LOWONGAN VISA SPONSOR / RELOKASI**
+    ✈️️ **LOWONGAN VISA SPONSOR / RELOKASI**
     • **[Judul Posisi - Perusahaan]**
       [Ringkasan 1 kalimat syarat/tech stack]
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
     """
 
-    # Model fallback list jika salah satu sedang high traffic
-    models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash"]
+    # Model aktif terbaru di google-genai SDK
+    models_to_try = ["gemini-2.5-flash", "gemini-2.5-pro"]
 
     for model_name in models_to_try:
         print(f"🔄 Trying model: {model_name}...")
@@ -299,7 +299,6 @@ def summarize_with_gemini(job_data, retries=3):
                 )
                 return response.text
             except errors.APIError as e:
-                # Handle 503 / 429 Rate limits dengan Exponential Backoff + Jitter
                 wait_time = (2 ** attempt) + random.uniform(1, 3)
                 print(f"⚠️ Retry {attempt}/{retries} - [{model_name}] API Error: {e.message}")
                 if attempt == retries:
