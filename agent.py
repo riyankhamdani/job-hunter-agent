@@ -233,7 +233,7 @@ def get_job_postings(seen_urls):
     return job_data
 
 
-def summarize_with_gemini(job_data, retries=3):
+def summarize_with_gemini(job_data, retries=5):
     if not GEMINI_API_KEY:
         print("❌ Error: GEMINI_API_KEY tidak dikonfigurasi.")
         return None
@@ -276,22 +276,23 @@ def summarize_with_gemini(job_data, retries=3):
       [Ringkasan 1 kalimat syarat/tech stack]
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
 
-    ✈️️ **LOWONGAN VISA SPONSOR / RELOKASI**
+    ✈ **LOWONGAN VISA SPONSOR / RELOKASI**
     • **[Judul Posisi - Perusahaan]**
       [Ringkasan 1 kalimat syarat/tech stack]
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
     """
 
-    # Model list resmi, cepat & ultra-stabil
+    # Model Gemini 3.x aktif sesuai spesifikasi API Google terbaru
     models_to_try = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
+        "gemini-3.8-flash",
+        "gemini-3.1-pro-preview",
+        "gemini-3.0-flash",
     ]
 
+    # Matikan AFC agar tidak memicu warning SDK
     config = types.GenerateContentConfig(
         temperature=0.2,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
 
     for model_name in models_to_try:
@@ -299,24 +300,30 @@ def summarize_with_gemini(job_data, retries=3):
         for attempt in range(1, retries + 1):
             try:
                 response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=config
+                    model=model_name, contents=prompt, config=config
                 )
                 return response.text
             except errors.APIError as e:
-                wait_time = (2 ** attempt) + random.uniform(1, 3)
-                print(f"⚠️ Retry {attempt}/{retries} - [{model_name}] API Error: {e.message}")
+                wait_time = (3**attempt) + random.uniform(2, 5)
+                print(
+                    f"⚠️ Retry {attempt}/{retries} - [{model_name}] API Error: {e.message}"
+                )
                 if attempt == retries:
-                    print(f"⚠️ Model {model_name} gagal, mencoba model alternatif...")
+                    print(
+                        f"⚠️ Model {model_name} gagal, mencoba model alternatif..."
+                    )
                     break
-                print(f"⏳ Menunggu {wait_time:.1f} detik sebelum mencoba lagi...")
+                print(
+                    f"⏳ Menunggu {wait_time:.1f} detik sebelum mencoba lagi..."
+                )
                 time.sleep(wait_time)
             except Exception as e:
                 print(f"❌ Error tak terduga pada {model_name}: {e}")
                 break
 
-    print("❌ Gagal membuat rangkuman setelah beberapa kali percobaan dengan seluruh model.")
+    print(
+        "❌ Gagal membuat rangkuman setelah beberapa kali percobaan dengan seluruh model."
+    )
     return None
 
 
@@ -337,7 +344,9 @@ def send_telegram(text):
     res = requests.post(url, json=payload, timeout=10)
 
     if res.status_code != 200:
-        print(f"⚠️ Telegram Markdown Error: {res.text}. Retrying plain text...")
+        print(
+            f"⚠️ Telegram Markdown Error: {res.text}. Retrying plain text..."
+        )
         payload.pop("parse_mode", None)
         res = requests.post(url, json=payload, timeout=10)
 
