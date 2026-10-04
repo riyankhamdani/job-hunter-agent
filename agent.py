@@ -6,7 +6,7 @@ import sys
 import time
 import requests
 from google import genai
-from google.genai import errors
+from google.genai import types, errors
 
 # Credentials
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -16,7 +16,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 SEEN_URLS_FILE = "seen_urls.json"
 
-# Blacklist domain spam/forum/aggregator kotor yang bikin lambat
+# Blacklist domain spam/forum/aggregator kotor
 EXCLUDED_DOMAINS = [
     "reddit.com",
     "instagram.com",
@@ -76,11 +76,9 @@ def is_job_active(url):
         }
         response = requests.get(url, headers=headers, timeout=5, allow_redirects=True)
 
-        # 1. Cek HTTP status code
         if response.status_code != 200:
             return False
 
-        # 2. Cek keyword lowongan sudah ditutup
         expired_keywords = [
             "no longer accepting applications",
             "job has expired",
@@ -138,7 +136,6 @@ def search_tavily(query, domains=None):
             for r in results:
                 link = r.get("url", "")
 
-                # Early exclusion check (filter domain kotor sebelum hit HTTP)
                 if any(bad_domain in link.lower() for bad_domain in EXCLUDED_DOMAINS):
                     continue
 
@@ -153,7 +150,6 @@ def search_tavily(query, domains=None):
                     )
 
                 if is_valid:
-                    # Validasi live HTTP & status penutupan lowongan
                     if is_job_active(link):
                         valid_jobs.append({
                             "title": r.get("title", "Job Posting"),
@@ -237,13 +233,13 @@ def get_job_postings(seen_urls):
     return job_data
 
 
-def summarize_with_gemini(job_data, retries=5):
+def summarize_with_gemini(job_data, retries=3):
     if not GEMINI_API_KEY:
         print("❌ Error: GEMINI_API_KEY tidak dikonfigurasi.")
         return None
 
     if not job_data["REMOTE_GLOBAL"] and not job_data["VISA_SPONSOR"]:
-        print("ℹ️️ Tidak ada lowongan baru hari ini.")
+        print("ℹ️ Tidak ada lowongan baru hari ini.")
         return None
 
     print("🤖 AI formatting direct job apply links with Gemini...")
@@ -286,8 +282,17 @@ def summarize_with_gemini(job_data, retries=5):
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
     """
 
-    # Primary model & Fallback model jika primary sedang high demand
-    models_to_try = ["gemini-3.8-flash", "gemini-2.5-pro"]
+    # Model list resmi, cepat & ultra-stabil
+    models_to_try = [
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+    ]
+
+    config = types.GenerateContentConfig(
+        temperature=0.2,
+    )
 
     for model_name in models_to_try:
         print(f"🔄 Trying model: {model_name}...")
@@ -296,13 +301,14 @@ def summarize_with_gemini(job_data, retries=5):
                 response = client.models.generate_content(
                     model=model_name,
                     contents=prompt,
+                    config=config
                 )
                 return response.text
             except errors.APIError as e:
-                wait_time = (2 ** attempt) + random.uniform(2, 5)
+                wait_time = (2 ** attempt) + random.uniform(1, 3)
                 print(f"⚠️ Retry {attempt}/{retries} - [{model_name}] API Error: {e.message}")
                 if attempt == retries:
-                    print(f"⚠️ Model {model_name} gagal setelah {retries}x percobaan, mencoba model alternatif...")
+                    print(f"⚠️ Model {model_name} gagal, mencoba model alternatif...")
                     break
                 print(f"⏳ Menunggu {wait_time:.1f} detik sebelum mencoba lagi...")
                 time.sleep(wait_time)
