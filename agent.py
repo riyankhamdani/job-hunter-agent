@@ -233,7 +233,7 @@ def get_job_postings(seen_urls):
     return job_data
 
 
-def summarize_with_gemini(job_data, retries=3):
+def summarize_with_gemini(job_data, retries=4):
     if not GEMINI_API_KEY:
         print("❌ Error: GEMINI_API_KEY tidak dikonfigurasi.")
         return None
@@ -282,17 +282,25 @@ def summarize_with_gemini(job_data, retries=3):
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
     """
 
-    # Urutan model fallback resmi
+    # Model Gemini aktif
     models_to_try = [
         "gemini-3.8-flash",
-        "gemini-2.5-flash",
-        "gemini-1.5-flash",
     ]
 
     config = types.GenerateContentConfig(
         temperature=0.2,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
+
+    non_retryable_keywords = [
+        "quota",
+        "not found",
+        "not supported",
+        "limit: 0",
+        "no longer available",
+        "deprecated",
+        "please update your code",
+    ]
 
     for model_name in models_to_try:
         print(f"🔄 Trying model: {model_name}...")
@@ -305,83 +313,16 @@ def summarize_with_gemini(job_data, retries=3):
             except errors.APIError as e:
                 msg = str(e.message).lower()
 
-                # Fast fail jika error permanen (quota habis / model not found)
-                if "quota" in msg or "not found" in msg or "not supported" in msg or "limit: 0" in msg:
-                    print(f"⚠️️ [{model_name}] Non-retryable error: {e.message[:80]}... Langsung ganti model.")
+                # Fast fail jika error permanen
+                if any(kw in msg for kw in non_retryable_keywords):
+                    print(f"⚠️ [{model_name}] Non-retryable error: {e.message[:80]}... Langsung ganti model.")
                     break
 
-                # Retry singkat hanya untuk high demand/temporary rate limit
-                wait_time = (2 ** attempt) + random.uniform(1, 2)
+                # Jeda retry bertahap khusus untuk High Demand
+                wait_time = (4 * attempt) + random.uniform(2, 4)
                 print(
                     f"⚠️ Retry {attempt}/{retries} - [{model_name}] API Error: {e.message}"
                 )
                 if attempt == retries:
                     print(
-                        f"⚠️ Model {model_name} gagal, mencoba model alternatif..."
-                    )
-                    break
-                print(
-                    f"⏳ Menunggu {wait_time:.1f} detik sebelum mencoba lagi..."
-                )
-                time.sleep(wait_time)
-            except Exception as e:
-                print(f"❌ Error tak terduga pada {model_name}: {e}")
-                break
-
-    print(
-        "❌ Gagal membuat rangkuman setelah beberapa kali percobaan dengan seluruh model."
-    )
-    return None
-
-
-def send_telegram(text):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("❌ Telegram credentials missing!")
-        return False
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "disable_web_page_preview": True,
-        "parse_mode": "Markdown",
-    }
-
-    res = requests.post(url, json=payload, timeout=10)
-
-    if res.status_code != 200:
-        print(
-            f"⚠️ Telegram Markdown Error: {res.text}. Retrying plain text..."
-        )
-        payload.pop("parse_mode", None)
-        res = requests.post(url, json=payload, timeout=10)
-
-    if res.status_code == 200:
-        print("🚀 Direct Job Digest successfully sent to Telegram!")
-        return True
-    else:
-        print(f"❌ Telegram Send Failed: {res.text}")
-        return False
-
-
-if __name__ == "__main__":
-    seen_urls = load_seen_urls()
-    raw_jobs = get_job_postings(seen_urls)
-
-    summary = summarize_with_gemini(raw_jobs)
-
-    if summary:
-        success = send_telegram(summary)
-        if success:
-            new_sent_urls = [
-                job["url"]
-                for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]
-                for job in raw_jobs[cat]
-            ]
-            seen_urls.update(new_sent_urls)
-            save_seen_urls(seen_urls)
-        else:
-            sys.exit(1)
-    else:
-        print("ℹ️ Tidak ada pesan terkirim karena tidak ada lowongan baru.")
+                        f"⚠️ Model {
