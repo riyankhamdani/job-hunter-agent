@@ -194,3 +194,202 @@ def get_job_postings(seen_urls):
             "domains": ats_domains,
         },
         {
+            "category": "VISA_SPONSOR",
+            "query": (
+                '("DevOps" OR "Cloud Engineer" OR "SRE") "visa sponsorship" (Europe OR UK'
+                " OR Japan OR Singapore)"
+            ),
+            "domains": None,
+        },
+        {
+            "category": "VISA_SPONSOR",
+            "query": (
+                '("DevOps" OR "SRE" OR "Platform Engineer") "relocation" (Netherlands OR'
+                " Japan OR Switzerland OR Germany)"
+            ),
+            "domains": None,
+        },
+    ]
+
+    job_data = {"REMOTE_GLOBAL": [], "VISA_SPONSOR": []}
+    print("🔎 Searching direct job apply links (Filtering duplicates & checking active status)...")
+
+    for cfg in search_configs:
+        results = search_tavily(cfg["query"], cfg["domains"])
+        for item in results:
+            url = item["url"]
+
+            if url in seen_urls:
+                continue
+
+            if not any(
+                existing["url"] == url for existing in job_data[cfg["category"]]
+            ):
+                job_data[cfg["category"]].append(item)
+
+    job_data["REMOTE_GLOBAL"] = job_data["REMOTE_GLOBAL"][:4]
+    job_data["VISA_SPONSOR"] = job_data["VISA_SPONSOR"][:4]
+
+    return job_data
+
+
+def summarize_with_gemini(job_data, retries=4):
+    if not GEMINI_API_KEY:
+        print("❌ Error: GEMINI_API_KEY tidak dikonfigurasi.")
+        return None
+
+    if not job_data["REMOTE_GLOBAL"] and not job_data["VISA_SPONSOR"]:
+        print("ℹ️ Tidak ada lowongan baru hari ini.")
+        return None
+
+    print("🤖 AI formatting direct job apply links with Gemini...")
+    client = genai.Client(api_key=GEMINI_API_KEY)
+
+    prompt = f"""
+    You are an Executive Career Agent for Riyan.
+    Summarize these specific job postings in Bahasa Indonesia matching Riyan's profile.
+
+    CANDIDATE PROFILE:
+    {CANDIDATE_PROFILE}
+
+    RAW JOB DATA:
+    {job_data}
+
+    INSTRUCTIONS:
+    1. Group into 2 sections:
+       - 🌐 **LOWONGAN REMOTE GLOBAL (24 JAM TERAKHIR)**
+       - ✈️ **LOWONGAN VISA SPONSOR / RELOKASI (NEGARA STABIL)**
+    2. Filter out any job from geopolitically unstable countries.
+    3. If VISA_SPONSOR or REMOTE_GLOBAL has no results in RAW JOB DATA, write: "Belum ada update lowongan baru hari ini." for that section.
+    4. For each valid job, output ONLY:
+       - Bold Job Title & Company Name
+       - 1 short sentence summarizing key requirements/tech stack matching Riyan
+       - The EXACT direct application link provided in the raw data.
+    5. ABSOLUTE RULE FOR URL: Copy the exact full "url" string provided in the raw data without altering it.
+
+    Format template:
+    💼 **DAILY JOB HUNTER DIGEST** 💼
+    ====================================
+
+    🌐 **LOWONGAN REMOTE GLOBAL (24H FRESH)**
+    • **[Judul Posisi - Perusahaan]**
+      [Ringkasan 1 kalimat syarat/tech stack]
+      🔗 Apply disini: [EXACT_URL_FROM_DATA]
+
+    ✈ **LOWONGAN VISA SPONSOR / RELOKASI**
+    • **[Judul Posisi - Perusahaan]**
+      [Ringkasan 1 kalimat syarat/tech stack]
+      🔗 Apply disini: [EXACT_URL_FROM_DATA]
+    """
+
+    # Model Gemini aktif
+    models_to_try = [
+        "gemini-3.8-flash",
+    ]
+
+    config = types.GenerateContentConfig(
+        temperature=0.2,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+    )
+
+    non_retryable_keywords = [
+        "quota",
+        "not found",
+        "not supported",
+        "limit: 0",
+        "no longer available",
+        "deprecated",
+        "please update your code",
+    ]
+
+    for model_name in models_to_try:
+        print(f"🔄 Trying model: {model_name}...")
+        for attempt in range(1, retries + 1):
+            try:
+                response = client.models.generate_content(
+                    model=model_name, contents=prompt, config=config
+                )
+                return response.text
+            except errors.APIError as e:
+                msg = str(e.message).lower()
+
+                # Fast fail jika error permanen
+                if any(kw in msg for kw in non_retryable_keywords):
+                    print(f"⚠️ [{model_name}] Non-retryable error: {e.message[:80]}... Langsung ganti model.")
+                    break
+
+                # Jeda retry bertahap khusus untuk High Demand
+                wait_time = (4 * attempt) + random.uniform(2, 4)
+                print(
+                    f"⚠️ Retry {attempt}/{retries} - [{model_name}] API Error: {e.message}"
+                )
+                if attempt == retries:
+                    print(
+                        f"⚠️ Model {model_name} gagal setelah {retries}x retry."
+                    )
+                    break
+                print(
+                    f"⏳ Menunggu {wait_time:.1f} detik sebelum mencoba lagi..."
+                )
+                time.sleep(wait_time)
+            except Exception as e:
+                print(f"❌ Error tak terduga pada {model_name}: {e}")
+                break
+
+    print(
+        "❌ Gagal membuat rangkuman setelah beberapa kali percobaan."
+    )
+    return None
+
+
+def send_telegram(text):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("❌ Telegram credentials missing!")
+        return False
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "disable_web_page_preview": True,
+        "parse_mode": "Markdown",
+    }
+
+    res = requests.post(url, json=payload, timeout=10)
+
+    if res.status_code != 200:
+        print(
+            f"⚠️ Telegram Markdown Error: {res.text}. Retrying plain text..."
+        )
+        payload.pop("parse_mode", None)
+        res = requests.post(url, json=payload, timeout=10)
+
+    if res.status_code == 200:
+        print("🚀 Direct Job Digest successfully sent to Telegram!")
+        return True
+    else:
+        print(f"❌ Telegram Send Failed: {res.text}")
+        return False
+
+
+if __name__ == "__main__":
+    seen_urls = load_seen_urls()
+    raw_jobs = get_job_postings(seen_urls)
+
+    summary = summarize_with_gemini(raw_jobs)
+
+    if summary:
+        success = send_telegram(summary)
+        if success:
+            new_sent_urls = [
+                job["url"]
+                for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]
+                for job in raw_jobs[cat]
+            ]
+            seen_urls.update(new_sent_urls)
+            save_seen_urls(seen_urls)
+        else:
+            sys.exit(1)
+    else:
+        print("ℹ️ Tidak ada pesan terkirim karena tidak ada lowongan baru.")
