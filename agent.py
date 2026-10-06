@@ -233,7 +233,7 @@ def get_job_postings(seen_urls):
     return job_data
 
 
-def summarize_with_gemini(job_data, retries=5):
+def summarize_with_gemini(job_data, retries=3):
     if not GEMINI_API_KEY:
         print("❌ Error: GEMINI_API_KEY tidak dikonfigurasi.")
         return None
@@ -282,14 +282,13 @@ def summarize_with_gemini(job_data, retries=5):
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
     """
 
-    # Model Gemini 3.x aktif sesuai spesifikasi API Google terbaru
+    # Urutan model fallback resmi
     models_to_try = [
         "gemini-3.8-flash",
-        "gemini-3.1-pro-preview",
-        "gemini-3.0-flash",
+        "gemini-2.5-flash",
+        "gemini-1.5-flash",
     ]
 
-    # Matikan AFC agar tidak memicu warning SDK
     config = types.GenerateContentConfig(
         temperature=0.2,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
@@ -304,7 +303,15 @@ def summarize_with_gemini(job_data, retries=5):
                 )
                 return response.text
             except errors.APIError as e:
-                wait_time = (3**attempt) + random.uniform(2, 5)
+                msg = str(e.message).lower()
+
+                # Fast fail jika error permanen (quota habis / model not found)
+                if "quota" in msg or "not found" in msg or "not supported" in msg or "limit: 0" in msg:
+                    print(f"⚠️️ [{model_name}] Non-retryable error: {e.message[:80]}... Langsung ganti model.")
+                    break
+
+                # Retry singkat hanya untuk high demand/temporary rate limit
+                wait_time = (2 ** attempt) + random.uniform(1, 2)
                 print(
                     f"⚠️ Retry {attempt}/{retries} - [{model_name}] API Error: {e.message}"
                 )
