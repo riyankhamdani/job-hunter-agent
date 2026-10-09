@@ -233,7 +233,7 @@ def get_job_postings(seen_urls):
     return job_data
 
 
-def summarize_with_gemini(job_data, retries=4):
+def summarize_with_gemini(job_data, retries=3):
     if not GEMINI_API_KEY:
         print("❌ Error: GEMINI_API_KEY tidak dikonfigurasi.")
         return None
@@ -276,15 +276,18 @@ def summarize_with_gemini(job_data, retries=4):
       [Ringkasan 1 kalimat syarat/tech stack]
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
 
-    ✈ **LOWONGAN VISA SPONSOR / RELOKASI**
+    ✈️ **LOWONGAN VISA SPONSOR / RELOKASI**
     • **[Judul Posisi - Perusahaan]**
       [Ringkasan 1 kalimat syarat/tech stack]
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
     """
 
-    # Model Gemini aktif
+    # Model Gemini bertingkat (Fallback chain jika model utama High Demand/Busy)
     models_to_try = [
         "gemini-3.8-flash",
+        "gemini-2.5-flash",
+        "gemini-1.5-flash",
+        "gemini-2.5-pro",
     ]
 
     config = types.GenerateContentConfig(
@@ -309,23 +312,25 @@ def summarize_with_gemini(job_data, retries=4):
                 response = client.models.generate_content(
                     model=model_name, contents=prompt, config=config
                 )
-                return response.text
+                if response.text:
+                    print(f"✅ Sukses generate summary menggunakan model: {model_name}")
+                    return response.text
             except errors.APIError as e:
                 msg = str(e.message).lower()
 
                 # Fast fail jika error permanen
                 if any(kw in msg for kw in non_retryable_keywords):
-                    print(f"⚠️ [{model_name}] Non-retryable error: {e.message[:80]}... Langsung ganti model.")
+                    print(f"⚠️ [{model_name}] Non-retryable error: {e.message[:80]}... Lanjut ke model berikutnya.")
                     break
 
-                # Jeda retry bertahap khusus untuk High Demand
-                wait_time = (4 * attempt) + random.uniform(2, 4)
+                # Jeda retry untuk High Demand
+                wait_time = (3 * attempt) + random.uniform(1, 3)
                 print(
                     f"⚠️ Retry {attempt}/{retries} - [{model_name}] API Error: {e.message}"
                 )
                 if attempt == retries:
                     print(
-                        f"⚠️ Model {model_name} gagal setelah {retries}x retry."
+                        f"⚠️ Model {model_name} gagal setelah {retries}x retry. Mencoba model fallback..."
                     )
                     break
                 print(
@@ -337,7 +342,7 @@ def summarize_with_gemini(job_data, retries=4):
                 break
 
     print(
-        "❌ Gagal membuat rangkuman setelah beberapa kali percobaan."
+        "❌ Gagal membuat rangkuman setelah mencoba semua model fallback."
     )
     return None
 
@@ -392,4 +397,4 @@ if __name__ == "__main__":
         else:
             sys.exit(1)
     else:
-        print("ℹ️ Tidak ada pesan terkirim karena tidak ada lowongan baru.")
+        print("ℹ️ Tidak ada pesan terkirim karena tidak ada lowongan baru atau AI formatting gagal.")
