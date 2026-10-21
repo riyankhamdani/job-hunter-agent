@@ -1,12 +1,12 @@
-from datetime import datetime
 import json
 import os
 import random
 import sys
 import time
+from datetime import datetime
 import requests
 from google import genai
-from google.genai import types, errors
+from google.genai import errors, types
 
 # Credentials
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -16,7 +16,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 SEEN_URLS_FILE = "seen_urls.json"
 
-# Blacklist domain spam/forum/aggregator kotor
+# Blacklist domain spam/forum/aggregator
 EXCLUDED_DOMAINS = [
     "reddit.com",
     "instagram.com",
@@ -30,6 +30,9 @@ EXCLUDED_DOMAINS = [
     "roberthalf.com",
     "youtube.com",
     "tiktok.com",
+    "teamblind.com",
+    "newsnowgh.com",
+    "jooble.org",
 ]
 
 CANDIDATE_PROFILE = """
@@ -65,28 +68,34 @@ def save_seen_urls(seen_urls):
 def is_job_active(url):
     """
     Mengecek apakah URL lowongan masih aktif (HTTP 200)
-    dan tidak berisi teks bahwa pendaftaran sudah ditutup.
+    dan tidak berisi teks penutupan pendaftaran.
     """
     try:
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }
-        response = requests.get(url, headers=headers, timeout=5, allow_redirects=True)
+        response = requests.get(url, headers=headers, timeout=8, allow_redirects=True)
 
-        if response.status_code != 200:
+        if response.status_code in [404, 410]:
             return False
+
+        # Tangani Cloudflare challenge (403) pada domain ATS resmi
+        if response.status_code != 200:
+            return any(ats in url for ats in ["greenhouse.io", "lever.co", "ashbyhq.com", "smartrecruiters.com"])
 
         expired_keywords = [
             "no longer accepting applications",
             "job has expired",
             "position has been filled",
             "this job is closed",
+            "this role is no longer available",
             "page not found",
             "404 not found",
-            "this role is no longer available",
         ]
 
         content_lower = response.text.lower()
@@ -108,7 +117,7 @@ def search_tavily(query, domains=None):
         "api_key": TAVILY_API_KEY,
         "query": query,
         "topic": "general",
-        "days": 1,  # Filter ketat 24 jam terakhir
+        "days": 1,
         "max_results": 20,
         "search_depth": "advanced",
     }
@@ -122,42 +131,20 @@ def search_tavily(query, domains=None):
             results = response.json().get("results", [])
             valid_jobs = []
 
-            allowed_domains = [
-                "greenhouse.io",
-                "jobs.lever.co",
-                "apply.workable.com",
-                "jobs.smartrecruiters.com",
-                "ashbyhq.com",
-                "linkedin.com/jobs/view",
-                "hatch.co",
-                "bamboohr.com",
-            ]
-
             for r in results:
                 link = r.get("url", "")
 
                 if any(bad_domain in link.lower() for bad_domain in EXCLUDED_DOMAINS):
                     continue
 
-                if domains:
-                    is_valid = any(domain in link for domain in allowed_domains)
+                if is_job_active(link):
+                    valid_jobs.append({
+                        "title": r.get("title", "Job Posting"),
+                        "url": link,
+                        "snippet": r.get("content", "")[:300],
+                    })
                 else:
-                    is_valid = (
-                        len(link.split("/")) > 3
-                        and not link.endswith("/jobs")
-                        and not link.endswith("/search")
-                        and "q-" not in link
-                    )
-
-                if is_valid:
-                    if is_job_active(link):
-                        valid_jobs.append({
-                            "title": r.get("title", "Job Posting"),
-                            "url": link,
-                            "snippet": r.get("content", "")[:300],
-                        })
-                    else:
-                        print(f"⏩ Skipping closed/expired job: {link}")
+                    print(f"⏩ Skipping closed/expired job: {link}")
 
             return valid_jobs
         return []
@@ -180,34 +167,23 @@ def get_job_postings(seen_urls):
         {
             "category": "REMOTE_GLOBAL",
             "query": (
-                '("DevOps" OR "Site Reliability Engineer" OR "Kubernetes") "Remote Worldwide"'
-                " -salesforce -apex"
+                '("DevOps" OR "Site Reliability Engineer" OR "Kubernetes") "Remote Worldwide" -salesforce -apex'
             ),
             "domains": ats_domains,
         },
         {
             "category": "REMOTE_GLOBAL",
             "query": (
-                '("Cloud Engineer" OR "Infrastructure Engineer") "Remote"'
-                ' ("Terraform" OR "GKE" OR "OpenShift") -salesforce'
+                '("Cloud Engineer" OR "Infrastructure Engineer") "Remote" ("Terraform" OR "GKE" OR "OpenShift") -salesforce'
             ),
             "domains": ats_domains,
         },
         {
             "category": "VISA_SPONSOR",
             "query": (
-                '("DevOps" OR "Cloud Engineer" OR "SRE") "visa sponsorship" (Europe OR UK'
-                " OR Japan OR Singapore)"
+                '("DevOps" OR "SRE" OR "Platform Engineer" OR "Cloud Engineer") ("visa sponsorship" OR "relocation support")'
             ),
-            "domains": None,
-        },
-        {
-            "category": "VISA_SPONSOR",
-            "query": (
-                '("DevOps" OR "SRE" OR "Platform Engineer") "relocation" (Netherlands OR'
-                " Japan OR Switzerland OR Germany)"
-            ),
-            "domains": None,
+            "domains": ats_domains,
         },
     ]
 
@@ -222,9 +198,7 @@ def get_job_postings(seen_urls):
             if url in seen_urls:
                 continue
 
-            if not any(
-                existing["url"] == url for existing in job_data[cfg["category"]]
-            ):
+            if not any(existing["url"] == url for existing in job_data[cfg["category"]]):
                 job_data[cfg["category"]].append(item)
 
     job_data["REMOTE_GLOBAL"] = job_data["REMOTE_GLOBAL"][:4]
@@ -282,12 +256,12 @@ def summarize_with_gemini(job_data, retries=3):
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
     """
 
-    # Model Gemini bertingkat (Fallback chain jika model utama High Demand/Busy)
+    # Model resmi & stabil untuk google-genai SDK
     models_to_try = [
-        "gemini-3.8-flash",
-        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
         "gemini-1.5-flash",
-        "gemini-2.5-pro",
+        "gemini-1.5-pro",
     ]
 
     config = types.GenerateContentConfig(
@@ -318,32 +292,22 @@ def summarize_with_gemini(job_data, retries=3):
             except errors.APIError as e:
                 msg = str(e.message).lower()
 
-                # Fast fail jika error permanen
                 if any(kw in msg for kw in non_retryable_keywords):
                     print(f"⚠️ [{model_name}] Non-retryable error: {e.message[:80]}... Lanjut ke model berikutnya.")
                     break
 
-                # Jeda retry untuk High Demand
                 wait_time = (3 * attempt) + random.uniform(1, 3)
-                print(
-                    f"⚠️ Retry {attempt}/{retries} - [{model_name}] API Error: {e.message}"
-                )
+                print(f"⚠️ Retry {attempt}/{retries} - [{model_name}] API Error: {e.message}")
                 if attempt == retries:
-                    print(
-                        f"⚠️ Model {model_name} gagal setelah {retries}x retry. Mencoba model fallback..."
-                    )
+                    print(f"⚠️ Model {model_name} gagal setelah {retries}x retry. Mencoba model fallback...")
                     break
-                print(
-                    f"⏳ Menunggu {wait_time:.1f} detik sebelum mencoba lagi..."
-                )
+                print(f"⏳ Menunggu {wait_time:.1f} detik sebelum mencoba lagi...")
                 time.sleep(wait_time)
             except Exception as e:
                 print(f"❌ Error tak terduga pada {model_name}: {e}")
                 break
 
-    print(
-        "❌ Gagal membuat rangkuman setelah mencoba semua model fallback."
-    )
+    print("❌ Gagal membuat rangkuman setelah mencoba semua model fallback.")
     return None
 
 
@@ -364,9 +328,7 @@ def send_telegram(text):
     res = requests.post(url, json=payload, timeout=10)
 
     if res.status_code != 200:
-        print(
-            f"⚠️ Telegram Markdown Error: {res.text}. Retrying plain text..."
-        )
+        print(f"⚠️ Telegram Markdown Error: {res.text}. Retrying plain text...")
         payload.pop("parse_mode", None)
         res = requests.post(url, json=payload, timeout=10)
 
