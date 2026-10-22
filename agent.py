@@ -86,7 +86,10 @@ def is_job_active(url):
 
         # Tangani Cloudflare challenge (403) pada domain ATS resmi
         if response.status_code != 200:
-            return any(ats in url for ats in ["greenhouse.io", "lever.co", "ashbyhq.com", "smartrecruiters.com"])
+            return any(
+                ats in url
+                for ats in ["greenhouse.io", "lever.co", "ashbyhq.com", "smartrecruiters.com"]
+            )
 
         expired_keywords = [
             "no longer accepting applications",
@@ -256,13 +259,23 @@ def summarize_with_gemini(job_data, retries=3):
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
     """
 
-    # Model resmi & stabil untuk google-genai SDK
-    models_to_try = [
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-    ]
+    # Deteksi model aktif dari API agar tidak error saat ada model sunset
+    models_to_try = []
+    try:
+        active_models = [m.name.replace("models/", "") for m in client.models.list()]
+        preferred = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"]
+        for p in preferred:
+            if p in active_models:
+                models_to_try.append(p)
+        for m in active_models:
+            if "gemini" in m and "embedding" not in m and m not in models_to_try:
+                models_to_try.append(m)
+    except Exception as e:
+        print(f"⚠️ Gagal mendeteksi model dinamis: {e}. Menggunakan fallback default.")
+        models_to_try = ["gemini-2.5-flash", "gemini-2.5-pro"]
+
+    if not models_to_try:
+        models_to_try = ["gemini-2.5-flash", "gemini-2.5-pro"]
 
     config = types.GenerateContentConfig(
         temperature=0.2,
