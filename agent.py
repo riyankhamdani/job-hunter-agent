@@ -1,9 +1,11 @@
+import hashlib
 import json
 import os
 import random
 import sys
 import time
 from datetime import datetime
+from urllib.parse import urlparse, urlunparse
 import requests
 from google import genai
 from google.genai import errors, types
@@ -14,7 +16,9 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-SEEN_URLS_FILE = "seen_urls.json"
+# Pastikan path file JSON selalu absolut ke lokasi script ini berada
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SEEN_URLS_FILE = os.path.join(BASE_DIR, "seen_urls.json")
 
 # Blacklist domain spam/forum/aggregator
 EXCLUDED_DOMAINS = [
@@ -45,31 +49,46 @@ Preferences: Fully Remote Worldwide, OR Onsite with Visa Sponsorship/Relocation 
 """
 
 
+def normalize_url(raw_url: str) -> str:
+    """Membersihkan URL dari query parameters dan trailing slash."""
+    try:
+        parsed = urlparse(raw_url)
+        # Ambil hanya scheme, netloc, dan path yang bersih
+        clean = urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"), "", "", ""))
+        return clean
+    except Exception:
+        return raw_url.strip().rstrip("/")
+
+
+def generate_job_hash(title: str, clean_url: str) -> str:
+    """Membuat signature unik dari title dan URL yang bersih."""
+    unique_string = f"{title.lower().strip()}|{clean_url}"
+    return hashlib.sha256(unique_string.encode()).hexdigest()
+
+
 def load_seen_urls():
-    """Membaca riwayat URL yang pernah dikirim."""
+    """Membaca riwayat identifier yang pernah dikirim."""
     if os.path.exists(SEEN_URLS_FILE):
         try:
             with open(SEEN_URLS_FILE, "r") as f:
-                return set(json.load(f))
+                data = json.load(f)
+                return set(data)
         except Exception as e:
             print(f"⚠️ Gagal membaca {SEEN_URLS_FILE}: {e}")
     return set()
 
 
 def save_seen_urls(seen_urls):
-    """Menyimpan riwayat URL baru ke file JSON."""
+    """Menyimpan riwayat identifier ke file JSON."""
     try:
         with open(SEEN_URLS_FILE, "w") as f:
             json.dump(list(seen_urls), f, indent=2)
+        print(f"💾 Berhasil menyimpan {len(seen_urls)} data ke {SEEN_URLS_FILE}")
     except Exception as e:
         print(f"⚠️ Gagal menyimpan {SEEN_URLS_FILE}: {e}")
 
 
 def is_job_active(url):
-    """
-    Mengecek apakah URL lowongan masih aktif (HTTP 200)
-    dan tidak berisi teks penutupan pendaftaran.
-    """
     try:
         headers = {
             "User-Agent": (
@@ -84,7 +103,6 @@ def is_job_active(url):
         if response.status_code in [404, 410]:
             return False
 
-        # Tangani Cloudflare challenge (403) pada domain ATS resmi
         if response.status_code != 200:
             return any(
                 ats in url
@@ -141,9 +159,13 @@ def search_tavily(query, domains=None):
                     continue
 
                 if is_job_active(link):
+                    clean_url = normalize_url(link)
+                    job_title = r.get("title", "Job Posting")
                     valid_jobs.append({
-                        "title": r.get("title", "Job Posting"),
+                        "title": job_title,
                         "url": link,
+                        "clean_url": clean_url,
+                        "hash": generate_job_hash(job_title, clean_url),
                         "snippet": r.get("content", "")[:300],
                     })
                 else:
@@ -156,7 +178,7 @@ def search_tavily(query, domains=None):
         return []
 
 
-def get_job_postings(seen_urls):
+def get_job_postings(seen_hashes):
     ats_domains = [
         "boards.greenhouse.io",
         "job-boards.greenhouse.io",
@@ -196,12 +218,13 @@ def get_job_postings(seen_urls):
     for cfg in search_configs:
         results = search_tavily(cfg["query"], cfg["domains"])
         for item in results:
-            url = item["url"]
+            job_hash = item["hash"]
 
-            if url in seen_urls:
+            # Cek apakah hash atau URL sudah pernah dikirim
+            if job_hash in seen_hashes or item["clean_url"] in seen_hashes:
                 continue
 
-            if not any(existing["url"] == url for existing in job_data[cfg["category"]]):
+            if not any(existing["hash"] == job_hash for existing in job_data[cfg["category"]]):
                 job_data[cfg["category"]].append(item)
 
     job_data["REMOTE_GLOBAL"] = job_data["REMOTE_GLOBAL"][:4]
@@ -259,7 +282,6 @@ def summarize_with_gemini(job_data, retries=3):
       🔗 Apply disini: [EXACT_URL_FROM_DATA]
     """
 
-    # Deteksi model aktif dari API agar tidak error saat ada model sunset
     models_to_try = []
     try:
         active_models = [m.name.replace("models/", "") for m in client.models.list()]
@@ -354,21 +376,22 @@ def send_telegram(text):
 
 
 if __name__ == "__main__":
-    seen_urls = load_seen_urls()
-    raw_jobs = get_job_postings(seen_urls)
+    seen_identifiers = load_seen_urls()
+    raw_jobs = get_job_postings(seen_identifiers)
 
     summary = summarize_with_gemini(raw_jobs)
 
     if summary:
         success = send_telegram(summary)
         if success:
-            new_sent_urls = [
-                job["url"]
-                for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]
-                for job in raw_jobs[cat]
-            ]
-            seen_urls.update(new_sent_urls)
-            save_seen_urls(seen_urls)
+            new_seen = set()
+            for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]:
+                for job in raw_jobs[cat]:
+                    new_seen.add(job["clean_url"])
+                    new_seen.add(job["hash"])
+
+            seen_identifiers.update(new_seen)
+            save_seen_urls(seen_identifiers)
         else:
             sys.exit(1)
     else:
