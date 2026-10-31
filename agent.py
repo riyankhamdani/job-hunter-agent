@@ -300,16 +300,25 @@ OUTPUT FORMAT TEMPLATE:
   🔗 Apply: [URL]
 """
 
-    for attempt in range(retries):
-        try:
-            response = client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=prompt,
-            )
-            return response.text
-        except Exception as e:
-            print(f"⚠️ Gemini API attempt {attempt + 1} failed: {e}")
-            time.sleep(2 * (attempt + 1))
+    models_to_try = ["gemini-3.8-flash", "gemini-2.5-pro", "gemini-2.0-flash"]
+
+    for model_name in models_to_try:
+        print(f"🔄 Mencoba model: {model_name}...")
+        for attempt in range(retries):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                )
+                if response and response.text:
+                    return response.text
+            except Exception as e:
+                err_msg = str(e)
+                print(f"⚠️ [{model_name}] attempt {attempt + 1} failed: {err_msg}")
+                if "404" in err_msg or "NOT_FOUND" in err_msg:
+                    print(f"⏩ Model {model_name} tidak ditemukan (404), langsung beralih ke model berikutnya.")
+                    break
+                time.sleep(4 * (attempt + 1))
 
     return None
 
