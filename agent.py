@@ -123,6 +123,8 @@ def is_job_active(url):
             "this role is no longer available",
             "page not found",
             "404 not found",
+            "exception occurred",
+            "we've encountered a problem",
         ]
 
         content_lower = response.text.lower()
