@@ -10,13 +10,14 @@ import requests
 from google import genai
 from google.genai import errors, types
 
-# Credentials
+# ==============================================================================
+# ENVIRONMENT CREDENTIALS
+# ==============================================================================
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Pastikan path file JSON selalu absolut ke lokasi script ini berada
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SEEN_URLS_FILE = os.path.join(BASE_DIR, "seen_urls.json")
 
@@ -39,13 +40,19 @@ EXCLUDED_DOMAINS = [
     "jooble.org",
 ]
 
+# Master Profile terinjeksi dari data CV resmi
 CANDIDATE_PROFILE = """
-Candidate Name: Muchamat Riyan Khamdani
-Education: Bachelor of Applied Science in Internet Engineering Technology (UGM)
-Current Role: Cloud Engineer at Izeno (Prev: L2 Cloud Engineer at Datacomm Diangraha)
-Tech Stack: AWS, GCP, Alibaba Cloud (ACA Certified), Terraform, Ansible, Docker, Podman, OpenShift, Kubernetes (GKE), AI Agents, LLM, Jenkins, Bamboo, Grafana, PostgreSQL, MySQL, Oracle, VMware vSphere, NSX-T, Zerto.
-Target Roles: Cloud Engineer, DevOps Engineer, Site Reliability Engineer (SRE), Infrastructure Engineer.
-Preferences: Fully Remote Worldwide, OR Onsite with Visa Sponsorship/Relocation in Stable Countries.
+CANDIDATE: Muchamat Riyan Khamdani
+EDUCATION: Bachelor of Applied Science in Internet Engineering Technology, Universitas Gadjah Mada (UGM)
+CURRENT ROLE: Cloud Engineer at iZeno (March 2023 - Present)
+- Architected & administered mission-critical Red Hat OpenShift & multi-cloud container environments (AWS/GCP) for tier-1 financial institutions (99.9% service availability).
+- Automated end-to-end Disaster Recovery Center (DRC) provisioning using Terraform & Ansible (cut manual provisioning by 60%, strict RTO/RPO audit compliance).
+- Operationalized containerized AI/LLM operational workflows on Dataiku DSS & Kubernetes/Podman (accelerated incident response by 40%), integrated securely across PostgreSQL, MySQL, and Oracle.
+PREVIOUS ROLE: L2 Cloud Engineer at Datacomm Diangraha (March 2022 - Feb 2023)
+- VMware vSphere, NSX-T, vCloud, Zerto failover testing, Acronis backup/restore, MikroTik routing.
+TECHNICAL SKILLS:
+- Linux (RHEL, Ubuntu, CentOS), AWS, Alibaba Cloud (ACA Certified), GCP, Terraform, Ansible, Docker, Podman, OpenShift, Kubernetes (GKE), Agentic AI, LLMs, Jenkins, Bamboo, Grafana, PostgreSQL, MySQL, Oracle, VMware, Zerto.
+PREFERENCES: Fully Remote Worldwide (APAC/EMEA/Global), OR Onsite with Relocation/Visa Sponsorship in stable economies (Japan, UAE/GCC, Singapore, Western Europe).
 """
 
 
@@ -53,7 +60,6 @@ def normalize_url(raw_url: str) -> str:
     """Membersihkan URL dari query parameters dan trailing slash."""
     try:
         parsed = urlparse(raw_url)
-        # Ambil hanya scheme, netloc, dan path yang bersih
         clean = urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"), "", "", ""))
         return clean
     except Exception:
@@ -138,8 +144,8 @@ def search_tavily(query, domains=None):
         "api_key": TAVILY_API_KEY,
         "query": query,
         "topic": "general",
-        "days": 1,
-        "max_results": 20,
+        "days": 2,
+        "max_results": 15,
         "search_depth": "advanced",
     }
 
@@ -166,7 +172,7 @@ def search_tavily(query, domains=None):
                         "url": link,
                         "clean_url": clean_url,
                         "hash": generate_job_hash(job_title, clean_url),
-                        "snippet": r.get("content", "")[:300],
+                        "snippet": r.get("content", "")[:450],
                     })
                 else:
                     print(f"⏩ Skipping closed/expired job: {link}")
@@ -179,56 +185,56 @@ def search_tavily(query, domains=None):
 
 
 def get_job_postings(seen_hashes):
+    # Fokus langsung ke domain ATS Tier-1 global
     ats_domains = [
         "boards.greenhouse.io",
         "job-boards.greenhouse.io",
         "jobs.lever.co",
-        "apply.workable.com",
-        "ashbyhq.com",
+        "jobs.ashbyhq.com",
         "jobs.smartrecruiters.com",
     ]
 
+    # Query diperketat: buang lowongan non-remote US/EU dan filter tech stack target
     search_configs = [
         {
             "category": "REMOTE_GLOBAL",
             "query": (
-                '("DevOps" OR "Site Reliability Engineer" OR "Kubernetes") "Remote Worldwide" -salesforce -apex'
-            ),
-            "domains": ats_domains,
-        },
-        {
-            "category": "REMOTE_GLOBAL",
-            "query": (
-                '("Cloud Engineer" OR "Infrastructure Engineer") "Remote" ("Terraform" OR "GKE" OR "OpenShift") -salesforce'
+                '("Site Reliability Engineer" OR "Cloud Platform Engineer" OR "Senior DevOps") '
+                '("Worldwide" OR "Anywhere" OR "Remote - Global" OR "APAC" OR "Indonesia") '
+                '("Kubernetes" OR "OpenShift" OR "Terraform") '
+                '-"US only" -"Must be located in US" -"Security Clearance" -"EU only"'
             ),
             "domains": ats_domains,
         },
         {
             "category": "VISA_SPONSOR",
             "query": (
-                '("DevOps" OR "SRE" OR "Platform Engineer" OR "Cloud Engineer") ("visa sponsorship" OR "relocation support")'
+                '("Site Reliability Engineer" OR "Platform Engineer" OR "Cloud Engineer") '
+                '("visa sponsorship" OR "relocation support") '
+                '("Kubernetes" OR "Cloud Infrastructure") '
+                '("Japan" OR "Dubai" OR "UAE" OR "Singapore" OR "Europe" OR "Germany")'
             ),
             "domains": ats_domains,
         },
     ]
 
     job_data = {"REMOTE_GLOBAL": [], "VISA_SPONSOR": []}
-    print("🔎 Searching direct job apply links (Filtering duplicates & checking active status)...")
+    print("🔎 Searching direct ATS links (Filtering duplicates & checking active status)...")
 
     for cfg in search_configs:
         results = search_tavily(cfg["query"], cfg["domains"])
         for item in results:
             job_hash = item["hash"]
 
-            # Cek apakah hash atau URL sudah pernah dikirim
             if job_hash in seen_hashes or item["clean_url"] in seen_hashes:
                 continue
 
             if not any(existing["hash"] == job_hash for existing in job_data[cfg["category"]]):
                 job_data[cfg["category"]].append(item)
 
-    job_data["REMOTE_GLOBAL"] = job_data["REMOTE_GLOBAL"][:4]
-    job_data["VISA_SPONSOR"] = job_data["VISA_SPONSOR"][:4]
+    # Batasi maksimal 3 lowongan terbaik per kategori agar pesan Telegram padat dan tidak terpotong
+    job_data["REMOTE_GLOBAL"] = job_data["REMOTE_GLOBAL"][:3]
+    job_data["VISA_SPONSOR"] = job_data["VISA_SPONSOR"][:3]
 
     return job_data
 
@@ -239,160 +245,43 @@ def summarize_with_gemini(job_data, retries=3):
         return None
 
     if not job_data["REMOTE_GLOBAL"] and not job_data["VISA_SPONSOR"]:
-        print("ℹ️ Tidak ada lowongan baru hari ini.")
+        print("ℹ️ Tidak ada lowongan baru yang lolos seleksi hari ini.")
         return None
 
     print("🤖 AI formatting direct job apply links with Gemini...")
     client = genai.Client(api_key=GEMINI_API_KEY)
 
     prompt = f"""
-    You are an Executive Career Agent for Riyan.
-    Summarize these specific job postings in Bahasa Indonesia matching Riyan's profile.
+You are an Executive Career Agent for Muchamat Riyan Khamdani.
+Filter and synthesize these ATS job postings into an actionable Telegram card in Bahasa Indonesia.
 
-    CANDIDATE PROFILE:
-    {CANDIDATE_PROFILE}
+CANDIDATE MASTER PROFILE:
+{CANDIDATE_PROFILE}
 
-    RAW JOB DATA:
-    {job_data}
+RAW SCRAPED JOB DATA:
+{job_data}
 
-    INSTRUCTIONS:
-    1. Group into 2 sections:
-       - 🌐 **LOWONGAN REMOTE GLOBAL (24 JAM TERAKHIR)**
-       - ✈️ **LOWONGAN VISA SPONSOR / RELOKASI (NEGARA STABIL)**
-    2. Filter out any job from geopolitically unstable countries.
-    3. If VISA_SPONSOR or REMOTE_GLOBAL has no results in RAW JOB DATA, write: "Belum ada update lowongan baru hari ini." for that section.
-    4. For each valid job, output ONLY:
-       - Bold Job Title & Company Name
-       - 1 short sentence summarizing key requirements/tech stack matching Riyan
-       - The EXACT direct application link provided in the raw data.
-    5. ABSOLUTE RULE FOR URL: Copy the exact full "url" string provided in the raw data without altering it.
+STRICT INSTRUCTIONS:
+1. Divide into 2 sections:
+   - 🌐 **LOWONGAN REMOTE GLOBAL (TAP-TO-APPLY)**
+   - ✈️ **LOWONGAN VISA SPONSOR / RELOKASI**
+2. STRICT ELIMINATION:
+   - Discard roles requiring US/EU citizenship or mandatory local on-site attendance without visa support.
+   - Discard roles with < 75% match against Riyan's profile.
+3. FOR EACH VALID ROLE:
+   - Header: 🔥 **[Match Score]% MATCH — [Judul Posisi - Perusahaan]**
+   - 📍 Lokasi & 💰 Estimasi Gaji wajar (Contoh: $75,000 - $95,000 USD / tahun).
+   - 📋 *Tap-to-copy Form Answer ("Why Us / Cover Pitch"):*
+     Generate a 2-SENTENCE punchy, high-impact answer in English linking Riyan's tier-1 banking OpenShift/K8s resilience (99.9% uptime) and IaC automation to the target company's mission.
+     ENCLOSE THIS 2-SENTENCE ANSWER STRICTLY INSIDE MONOSPACE CODE BLOCKS (```) so Riyan can tap to copy it in 1 second on Telegram mobile.
+   - 🔗 Apply link: EXACT URL FROM DATA (Do not truncate or alter).
+4. If a section has no qualifying jobs, write: "Belum ada lowongan dengan match tinggi hari ini."
 
-    Format template:
-    💼 **DAILY JOB HUNTER DIGEST** 💼
-    ====================================
+OUTPUT FORMAT TEMPLATE:
+💼 **DAILY JOB HUNTER DIGEST (ZERO-FRICTION)** 💼
+====================================
 
-    🌐 **LOWONGAN REMOTE GLOBAL (24H FRESH)**
-    • **[Judul Posisi - Perusahaan]**
-      [Ringkasan 1 kalimat syarat/tech stack]
-      🔗 Apply disini: [EXACT_URL_FROM_DATA]
-
-    ✈️ **LOWONGAN VISA SPONSOR / RELOKASI**
-    • **[Judul Posisi - Perusahaan]**
-      [Ringkasan 1 kalimat syarat/tech stack]
-      🔗 Apply disini: [EXACT_URL_FROM_DATA]
-    """
-
-    models_to_try = []
-    try:
-        active_models = [m.name.replace("models/", "") for m in client.models.list()]
-        preferred = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"]
-        for p in preferred:
-            if p in active_models:
-                models_to_try.append(p)
-        for m in active_models:
-            if "gemini" in m and "embedding" not in m and m not in models_to_try:
-                models_to_try.append(m)
-    except Exception as e:
-        print(f"⚠️ Gagal mendeteksi model dinamis: {e}. Menggunakan fallback default.")
-        models_to_try = ["gemini-2.5-flash", "gemini-2.5-pro"]
-
-    if not models_to_try:
-        models_to_try = ["gemini-2.5-flash", "gemini-2.5-pro"]
-
-    config = types.GenerateContentConfig(
-        temperature=0.2,
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-    )
-
-    non_retryable_keywords = [
-        "quota",
-        "not found",
-        "not supported",
-        "limit: 0",
-        "no longer available",
-        "deprecated",
-        "please update your code",
-    ]
-
-    for model_name in models_to_try:
-        print(f"🔄 Trying model: {model_name}...")
-        for attempt in range(1, retries + 1):
-            try:
-                response = client.models.generate_content(
-                    model=model_name, contents=prompt, config=config
-                )
-                if response.text:
-                    print(f"✅ Sukses generate summary menggunakan model: {model_name}")
-                    return response.text
-            except errors.APIError as e:
-                msg = str(e.message).lower()
-
-                if any(kw in msg for kw in non_retryable_keywords):
-                    print(f"⚠️ [{model_name}] Non-retryable error: {e.message[:80]}... Lanjut ke model berikutnya.")
-                    break
-
-                wait_time = (3 * attempt) + random.uniform(1, 3)
-                print(f"⚠️ Retry {attempt}/{retries} - [{model_name}] API Error: {e.message}")
-                if attempt == retries:
-                    print(f"⚠️ Model {model_name} gagal setelah {retries}x retry. Mencoba model fallback...")
-                    break
-                print(f"⏳ Menunggu {wait_time:.1f} detik sebelum mencoba lagi...")
-                time.sleep(wait_time)
-            except Exception as e:
-                print(f"❌ Error tak terduga pada {model_name}: {e}")
-                break
-
-    print("❌ Gagal membuat rangkuman setelah mencoba semua model fallback.")
-    return None
-
-
-def send_telegram(text):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("❌ Telegram credentials missing!")
-        return False
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "disable_web_page_preview": True,
-        "parse_mode": "Markdown",
-    }
-
-    res = requests.post(url, json=payload, timeout=10)
-
-    if res.status_code != 200:
-        print(f"⚠️ Telegram Markdown Error: {res.text}. Retrying plain text...")
-        payload.pop("parse_mode", None)
-        res = requests.post(url, json=payload, timeout=10)
-
-    if res.status_code == 200:
-        print("🚀 Direct Job Digest successfully sent to Telegram!")
-        return True
-    else:
-        print(f"❌ Telegram Send Failed: {res.text}")
-        return False
-
-
-if __name__ == "__main__":
-    seen_identifiers = load_seen_urls()
-    raw_jobs = get_job_postings(seen_identifiers)
-
-    summary = summarize_with_gemini(raw_jobs)
-
-    if summary:
-        success = send_telegram(summary)
-        if success:
-            new_seen = set()
-            for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]:
-                for job in raw_jobs[cat]:
-                    new_seen.add(job["clean_url"])
-                    new_seen.add(job["hash"])
-
-            seen_identifiers.update(new_seen)
-            save_seen_urls(seen_identifiers)
-        else:
-            sys.exit(1)
-    else:
-        print("ℹ️ Tidak ada pesan terkirim karena tidak ada lowongan baru atau AI formatting gagal.")
+🌐 **LOWONGAN REMOTE GLOBAL (TAP-TO-APPLY)**
+• 🔥 **[Match Score]% MATCH — [Judul Posisi - Perusahaan]**
+  📍 [Lokasi] | 💰 Est. Gaji: [Rentang USD]
+  📋 *Jawaban form ("Why Us?"):*
