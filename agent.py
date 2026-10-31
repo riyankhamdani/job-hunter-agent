@@ -282,6 +282,6 @@ OUTPUT FORMAT TEMPLATE:
 ====================================
 
 🌐 **LOWONGAN REMOTE GLOBAL (TAP-TO-APPLY)**
-• 🔥 **[Match Score]% MATCH — [Judul Posisi - Perusahaan]**
+- 🔥 **[Match Score]% MATCH — [Judul Posisi - Perusahaan]**
   📍 [Lokasi] | 💰 Est. Gaji: [Rentang USD]
   📋 *Jawaban form ("Why Us?"):*
