@@ -139,7 +139,7 @@ def search_tavily(query, domains=None):
         print("⚠️ Warning: TAVILY_API_KEY tidak ditemukan.")
         return []
 
-    url = "https://api.tavily.com/search"
+    url = "[https://api.tavily.com/search](https://api.tavily.com/search)"
     payload = {
         "api_key": TAVILY_API_KEY,
         "query": query,
