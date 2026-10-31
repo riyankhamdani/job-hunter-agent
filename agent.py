@@ -139,7 +139,7 @@ def search_tavily(query, domains=None):
         print("⚠️ Warning: TAVILY_API_KEY tidak ditemukan.")
         return []
 
-    url = "[https://api.tavily.com/search](https://api.tavily.com/search)"
+    url = "https://api.tavily.com/search"
     payload = {
         "api_key": TAVILY_API_KEY,
         "query": query,
@@ -285,3 +285,84 @@ OUTPUT FORMAT TEMPLATE:
 - 🔥 **[Match Score]% MATCH — [Judul Posisi - Perusahaan]**
   📍 [Lokasi] | 💰 Est. Gaji: [Rentang USD]
   📋 *Jawaban form ("Why Us?"):*
+  ```
+  [2-sentence high-impact pitch]
+  ```
+  🔗 Apply: [URL]
+
+✈️ **LOWONGAN VISA SPONSOR / RELOKASI**
+- 🔥 **[Match Score]% MATCH — [Judul Posisi - Perusahaan]**
+  📍 [Lokasi] | 💰 Est. Gaji: [Rentang USD]
+  📋 *Jawaban form ("Why Us?"):*
+  ```
+  [2-sentence high-impact pitch]
+  ```
+  🔗 Apply: [URL]
+"""
+
+    for attempt in range(retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
+            return response.text
+        except Exception as e:
+            print(f"⚠️ Gemini API attempt {attempt + 1} failed: {e}")
+            time.sleep(2 * (attempt + 1))
+
+    return None
+
+
+def send_telegram(message: str):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("❌ Error: TELEGRAM_BOT_TOKEN atau TELEGRAM_CHAT_ID tidak ditemukan.")
+        return
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+    # Pisahkan pesan jika melebihi batas 4000 karakter Telegram
+    chunks = [message[i : i + 4000] for i in range(0, len(message), 4000)]
+    for chunk in chunks:
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": chunk,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True,
+        }
+        try:
+            res = requests.post(url, json=payload, timeout=10)
+            if res.status_code != 200:
+                # Fallback ke plain text jika ada formatting markdown yang tidak valid
+                payload.pop("parse_mode", None)
+                requests.post(url, json=payload, timeout=10)
+        except Exception as e:
+            print(f"❌ Gagal mengirim pesan ke Telegram: {e}")
+
+
+def main():
+    print("🚀 Starting Job Hunter Agent...")
+    seen_urls = load_seen_urls()
+    job_data = get_job_postings(seen_hashes=seen_urls)
+
+    if not job_data["REMOTE_GLOBAL"] and not job_data["VISA_SPONSOR"]:
+        print("ℹ️ Tidak ada lowongan baru hari ini. Selesai.")
+        return
+
+    summary = summarize_with_gemini(job_data)
+    if summary:
+        send_telegram(summary)
+        print("✅ Notifikasi Telegram berhasil dikirim.")
+
+        # Simpan hash dan URL bersih agar tidak terkirim duplikat di run berikutnya
+        for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]:
+            for item in job_data[cat]:
+                seen_urls.add(item["hash"])
+                seen_urls.add(item["clean_url"])
+        save_seen_urls(seen_urls)
+    else:
+        print("⚠️ Gagal membuat ringkasan lowongan dengan Gemini.")
+
+
+if __name__ == "__main__":
+    main()
