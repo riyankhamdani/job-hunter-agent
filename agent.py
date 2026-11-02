@@ -95,6 +95,7 @@ def save_seen_urls(seen_urls):
 
 
 def is_job_active(url):
+    """Memeriksa apakah link lowongan masih aktif di portal ATS."""
     try:
         headers = {
             "User-Agent": (
@@ -137,6 +138,7 @@ def is_job_active(url):
 
 
 def search_tavily(query, domains=None):
+    """Mencari listing pekerjaan via Tavily API."""
     if not TAVILY_API_KEY:
         print("⚠️ Warning: TAVILY_API_KEY tidak ditemukan.")
         return []
@@ -187,7 +189,7 @@ def search_tavily(query, domains=None):
 
 
 def get_job_postings(seen_hashes):
-    # Fokus langsung ke domain ATS Tier-1 global
+    """Menyaring postingan lowongan kerja dari domain ATS Tier-1."""
     ats_domains = [
         "boards.greenhouse.io",
         "job-boards.greenhouse.io",
@@ -196,7 +198,6 @@ def get_job_postings(seen_hashes):
         "jobs.smartrecruiters.com",
     ]
 
-    # Query diperketat: buang lowongan non-remote US/EU dan filter tech stack target
     search_configs = [
         {
             "category": "REMOTE_GLOBAL",
@@ -234,7 +235,6 @@ def get_job_postings(seen_hashes):
             if not any(existing["hash"] == job_hash for existing in job_data[cfg["category"]]):
                 job_data[cfg["category"]].append(item)
 
-    # Batasi maksimal 3 lowongan terbaik per kategori agar pesan Telegram padat dan tidak terpotong
     job_data["REMOTE_GLOBAL"] = job_data["REMOTE_GLOBAL"][:3]
     job_data["VISA_SPONSOR"] = job_data["VISA_SPONSOR"][:3]
 
@@ -242,6 +242,7 @@ def get_job_postings(seen_hashes):
 
 
 def summarize_with_gemini(job_data, retries=3):
+    """Memformat dan menyaring hasil lowongan via Gemini dengan adaptive retry."""
     if not GEMINI_API_KEY:
         print("❌ Error: GEMINI_API_KEY tidak dikonfigurasi.")
         return None
@@ -273,7 +274,7 @@ STRICT INSTRUCTIONS:
 3. FOR EACH VALID ROLE:
    - Header: 🔥 **[Match Score]% MATCH — [Judul Posisi - Perusahaan]**
    - 📍 Lokasi & 💰 Estimasi Gaji wajar (Contoh: $75,000 - $95,000 USD / tahun).
-   - 📋 *Tap-to-copy Form Answer ("Why Us / Cover Pitch"):*
+   - 📋 *Jawaban form ("Why Us / Cover Pitch"):*
      Generate a 2-SENTENCE punchy, high-impact answer in English linking Riyan's tier-1 banking OpenShift/K8s resilience (99.9% uptime) and IaC automation to the target company's mission.
      ENCLOSE THIS 2-SENTENCE ANSWER STRICTLY INSIDE MONOSPACE CODE BLOCKS (```) so Riyan can tap to copy it in 1 second on Telegram mobile.
    - 🔗 Apply link: EXACT URL FROM DATA (Do not truncate or alter).
@@ -302,11 +303,14 @@ OUTPUT FORMAT TEMPLATE:
   🔗 Apply: [URL]
 """
 
-    models_to_try = ["gemini-3.8-flash", "gemini-2.5-pro", "gemini-2.0-flash"]
+    models_to_try = [
+        "gemini-3.8-flash",
+        "gemini-3.1-pro-preview",
+    ]
 
     for model_name in models_to_try:
         print(f"🔄 Mencoba model: {model_name}...")
-        for attempt in range(retries):
+        for attempt in range(1, retries + 1):
             try:
                 response = client.models.generate_content(
                     model=model_name,
@@ -316,23 +320,30 @@ OUTPUT FORMAT TEMPLATE:
                     return response.text
             except Exception as e:
                 err_msg = str(e)
-                print(f"⚠️ [{model_name}] attempt {attempt + 1} failed: {err_msg}")
+                print(f"⚠️ [{model_name}] attempt {attempt} failed: {err_msg}")
+
                 if "404" in err_msg or "NOT_FOUND" in err_msg:
-                    print(f"⏩ Model {model_name} tidak ditemukan (404), langsung beralih ke model berikutnya.")
+                    print(f"⏩ Model {model_name} 404, beralih ke model cadangan.")
                     break
-                time.sleep(4 * (attempt + 1))
+
+                if "503" in err_msg or "UNAVAILABLE" in err_msg:
+                    sleep_time = 5 * attempt
+                    print(f"⏳ Server sedang padat, menunggu {sleep_time} detik...")
+                    time.sleep(sleep_time)
+                else:
+                    time.sleep(3 * attempt)
 
     return None
 
 
 def send_telegram(message: str):
+    """Mengirim ringkasan lowongan ke bot Telegram."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("❌ Error: TELEGRAM_BOT_TOKEN atau TELEGRAM_CHAT_ID tidak ditemukan.")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
-    # Pisahkan pesan jika melebihi batas 4000 karakter Telegram
     chunks = [message[i : i + 4000] for i in range(0, len(message), 4000)]
     for chunk in chunks:
         payload = {
@@ -344,7 +355,6 @@ def send_telegram(message: str):
         try:
             res = requests.post(url, json=payload, timeout=10)
             if res.status_code != 200:
-                # Fallback ke plain text jika ada formatting markdown yang tidak valid
                 payload.pop("parse_mode", None)
                 requests.post(url, json=payload, timeout=10)
         except Exception as e:
@@ -365,7 +375,6 @@ def main():
         send_telegram(summary)
         print("✅ Notifikasi Telegram berhasil dikirim.")
 
-        # Simpan hash dan URL bersih agar tidak terkirim duplikat di run berikutnya
         for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]:
             for item in job_data[cat]:
                 seen_urls.add(item["hash"])
