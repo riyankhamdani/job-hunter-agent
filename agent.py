@@ -241,15 +241,46 @@ def get_job_postings(seen_hashes):
     return job_data
 
 
-def summarize_with_gemini(job_data, retries=3):
-    """Memformat dan menyaring hasil lowongan via Gemini dengan adaptive retry."""
-    if not GEMINI_API_KEY:
-        print("❌ Error: GEMINI_API_KEY tidak dikonfigurasi.")
-        return None
+def format_jobs_raw_fallback(job_data: dict) -> str:
+    """Format cadangan jika API AI mengalami gangguan (503/429)."""
+    lines = [
+        "💼 *DAILY JOB HUNTER DIGEST (RAW FALLBACK)* 💼",
+        "====================================",
+        "⚠️ _Catatan: AI formatter sedang cooldown, menampilkan tautan langsung._\n",
+    ]
 
+    lines.append("🌐 *LOWONGAN REMOTE GLOBAL (TAP-TO-APPLY)*")
+    if job_data.get("REMOTE_GLOBAL"):
+        for j in job_data["REMOTE_GLOBAL"]:
+            lines.append(f"🔥 *{j['title']}*")
+            if j.get("snippet"):
+                lines.append(f"📝 {j['snippet'][:180].strip()}...")
+            lines.append(f"🔗 Apply: {j['url']}\n")
+    else:
+        lines.append("Belum ada lowongan dengan match tinggi hari ini.\n")
+
+    lines.append("✈️ *LOWONGAN VISA SPONSOR / RELOKASI*")
+    if job_data.get("VISA_SPONSOR"):
+        for j in job_data["VISA_SPONSOR"]:
+            lines.append(f"🔥 *{j['title']}*")
+            if j.get("snippet"):
+                lines.append(f"📝 {j['snippet'][:180].strip()}...")
+            lines.append(f"🔗 Apply: {j['url']}\n")
+    else:
+        lines.append("Belum ada lowongan dengan match tinggi hari ini.\n")
+
+    return "\n".join(lines)
+
+
+def summarize_with_gemini(job_data, retries=2):
+    """Memformat dan menyaring hasil lowongan via Gemini dengan graceful degradation."""
     if not job_data["REMOTE_GLOBAL"] and not job_data["VISA_SPONSOR"]:
         print("ℹ️ Tidak ada lowongan baru yang lolos seleksi hari ini.")
         return None
+
+    if not GEMINI_API_KEY:
+        print("⚠️ Warning: GEMINI_API_KEY tidak dikonfigurasi. Menggunakan raw fallback.")
+        return format_jobs_raw_fallback(job_data)
 
     print("🤖 AI formatting direct job apply links with Gemini...")
     client = genai.Client(api_key=GEMINI_API_KEY)
@@ -303,9 +334,11 @@ OUTPUT FORMAT TEMPLATE:
   🔗 Apply: [URL]
 """
 
+    # Model Flash yang didukung kuota Free Tier (15 RPM / 1500 RPD)
     models_to_try = [
-        "gemini-3.8-flash",
-        "gemini-3.1-pro-preview",
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
     ]
 
     for model_name in models_to_try:
@@ -320,20 +353,28 @@ OUTPUT FORMAT TEMPLATE:
                     return response.text
             except Exception as e:
                 err_msg = str(e)
-                print(f"⚠️ [{model_name}] attempt {attempt} failed: {err_msg}")
+                print(f"⚠️ [{model_name}] attempt {attempt} failed: {err_msg[:200]}")
 
-                if "404" in err_msg or "NOT_FOUND" in err_msg:
-                    print(f"⏩ Model {model_name} 404, beralih ke model cadangan.")
-                    break
+                # Langsung skip model jika tidak memiliki kuota sama sekali
+                if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                    if "limit: 0" in err_msg or "day limit exceeded" in err_msg:
+                        print(f"🚫 Kuota {model_name} tidak tersedia (limit: 0). Beralih ke model berikutnya.")
+                        break
+                    time.sleep(5 * attempt)
 
-                if "503" in err_msg or "UNAVAILABLE" in err_msg:
-                    sleep_time = 5 * attempt
-                    print(f"⏳ Server sedang padat, menunggu {sleep_time} detik...")
+                elif "503" in err_msg or "UNAVAILABLE" in err_msg:
+                    sleep_time = 3 * attempt
+                    print(f"⏳ Server {model_name} sedang padat (503), menunggu {sleep_time} detik...")
                     time.sleep(sleep_time)
-                else:
-                    time.sleep(3 * attempt)
 
-    return None
+                elif "404" in err_msg or "NOT_FOUND" in err_msg:
+                    print(f"⏩ Model {model_name} tidak ditemukan (404). Beralih.")
+                    break
+                else:
+                    time.sleep(2 * attempt)
+
+    print("⚠️ Semua model AI gagal/padat. Mengaktifkan raw text fallback...")
+    return format_jobs_raw_fallback(job_data)
 
 
 def send_telegram(message: str):
@@ -381,7 +422,7 @@ def main():
                 seen_urls.add(item["clean_url"])
         save_seen_urls(seen_urls)
     else:
-        print("⚠️ Gagal membuat ringkasan lowongan dengan Gemini.")
+        print("⚠️ Gagal memproses lowongan.")
 
 
 if __name__ == "__main__":
