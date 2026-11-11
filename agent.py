@@ -194,9 +194,10 @@ def is_disqualified_job(title: str, snippet: str, category: str) -> bool:
   combined = f"{title} {snippet}".lower()
 
   if category == "REMOTE_GLOBAL":
-    # Buang yang terikat state US (Contoh: Lehi, UT / Austin, TX)
     if US_STATE_PATTERN.search(combined) and (
-        "united states" in combined or "remote - us" in combined or ", ut" in combined
+        "united states" in combined
+        or "remote - us" in combined
+        or ", ut" in combined
     ):
       return True
     if any(bad_kw in combined for bad_kw in DISQUALIFIED_KEYWORDS_GLOBAL):
@@ -310,7 +311,6 @@ def get_job_postings(seen_hashes):
       if job_hash in seen_hashes or item["clean_url"] in seen_hashes:
         continue
 
-      # Filter eliminasi lokal Python sebelum masuk daftar
       if is_disqualified_job(item["title"], item["snippet"], cat):
         print(f"🚫 Eliminated (Disqualified by local filter): {item['title']}")
         continue
@@ -320,7 +320,6 @@ def get_job_postings(seen_hashes):
       ):
         job_data[cat].append(item)
 
-    # Batasi maksimal 2 role terbaik per kategori untuk menghemat token & RPM
     job_data[cat] = job_data[cat][:2]
 
   return job_data
@@ -372,7 +371,6 @@ def summarize_with_gemini(job_data, retries=2):
   print("🤖 AI formatting direct job apply links with Gemini...")
   client = genai.Client(api_key=GEMINI_API_KEY)
 
-  # Bersihkan data agar hemat token dan deterministik
   clean_input = {}
   for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]:
     clean_input[cat] = [
@@ -414,3 +412,100 @@ OUTPUT FORMAT TEMPLATE:
 - 🔥 **[Match Score]% MATCH — [Judul Posisi - Perusahaan]**
   📍 [Lokasi] | 💰 Est. Gaji: [Rentang USD]
   📋 *Jawaban form ("Why Us?"):*
+  ```
+  [2-sentence high-impact pitch]
+  ```
+  🔗 Apply: [URL]
+
+✈️ **LOWONGAN VISA SPONSOR / RELOKASI**
+- 🔥 **[Match Score]% MATCH — [Judul Posisi - Perusahaan]**
+  📍 [Lokasi] | 💰 Est. Gaji: [Rentang USD]
+  📋 *Jawaban form ("Why Us?"):*
+  ```
+  [2-sentence high-impact pitch]
+  ```
+  🔗 Apply: [URL]
+"""
+
+  models_to_try = [
+      "gemini-2.0-flash",
+      "gemini-1.5-flash",
+  ]
+
+  for model_name in models_to_try:
+    print(f"🔄 Mencoba model: {model_name}...")
+    for attempt in range(1, retries + 1):
+      try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+        )
+        if response and response.text:
+          return response.text
+      except Exception as e:
+        err_msg = str(e)
+        print(f"⚠️ [{model_name}] attempt {attempt} failed: {err_msg[:200]}")
+
+        if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+          time.sleep(6 * attempt)
+        elif "503" in err_msg or "UNAVAILABLE" in err_msg:
+          time.sleep(4 * attempt)
+        elif "404" in err_msg or "NOT_FOUND" in err_msg:
+          break
+        else:
+          time.sleep(2 * attempt)
+
+  print("⚠️ Semua model AI gagal/padat. Mengaktifkan raw text fallback...")
+  return format_jobs_raw_fallback(job_data)
+
+
+def send_telegram(message: str):
+  """Mengirim ringkasan lowongan ke bot Telegram."""
+  if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    print("❌ Error: TELEGRAM_BOT_TOKEN atau TELEGRAM_CHAT_ID tidak ditemukan.")
+    return
+
+  url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+  chunks = [message[i : i + 4000] for i in range(0, len(message), 4000)]
+  for chunk in chunks:
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": chunk,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True,
+    }
+    try:
+      res = requests.post(url, json=payload, timeout=10)
+      if res.status_code != 200:
+        payload.pop("parse_mode", None)
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+      print(f"❌ Gagal mengirim pesan ke Telegram: {e}")
+
+
+def main():
+  print("🚀 Starting Job Hunter Agent...")
+  seen_urls = load_seen_urls()
+  job_data = get_job_postings(seen_hashes=seen_urls)
+
+  if not job_data["REMOTE_GLOBAL"] and not job_data["VISA_SPONSOR"]:
+    print("ℹ️ Tidak ada lowongan baru hari ini. Selesai.")
+    return
+
+  summary = summarize_with_gemini(job_data)
+  if summary:
+    send_telegram(summary)
+    print("✅ Notifikasi Telegram berhasil dikirim.")
+
+    for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]:
+      for item in job_data[cat]:
+        seen_urls.add(item["hash"])
+        seen_urls.add(item["clean_url"])
+    save_seen_urls(seen_urls)
+  else:
+    print("⚠️ Gagal memproses lowongan.")
+
+
+if __name__ == "__main__":
+  main()
