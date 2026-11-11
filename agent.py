@@ -1,14 +1,14 @@
 import hashlib
 import json
 import os
-import random
+import re
 import sys
 import time
 from datetime import datetime
 from urllib.parse import urlparse, urlunparse
-import requests
 from google import genai
 from google.genai import errors, types
+import requests
 
 # ==============================================================================
 # ENVIRONMENT CREDENTIALS
@@ -40,6 +40,42 @@ EXCLUDED_DOMAINS = [
     "jooble.org",
 ]
 
+US_STATE_PATTERN = re.compile(
+    r"\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\b",
+    re.IGNORECASE,
+)
+
+DISQUALIFIED_KEYWORDS_GLOBAL = [
+    "us only",
+    "u.s. only",
+    "united states only",
+    "us-based",
+    "must be located in the us",
+    "must reside in the us",
+    "us citizenship",
+    "green card",
+    "security clearance",
+    "secret clearance",
+    "itar",
+    "w2 only",
+    "no c2c",
+    "uk only",
+    "eu only",
+    "canada only",
+    "hybrid",
+    "on-site",
+    "onsite",
+]
+
+DISQUALIFIED_KEYWORDS_SPONSOR = [
+    "no sponsorship",
+    "cannot sponsor",
+    "not eligible for sponsorship",
+    "security clearance",
+    "itar",
+    "us citizenship required",
+]
+
 # Master Profile terinjeksi dari data CV resmi
 CANDIDATE_PROFILE = """
 CANDIDATE: Muchamat Riyan Khamdani
@@ -57,243 +93,302 @@ PREFERENCES: Fully Remote Worldwide (APAC/EMEA/Global), OR Onsite with Relocatio
 
 
 def normalize_url(raw_url: str) -> str:
-    """Membersihkan URL dari query parameters dan trailing slash."""
-    try:
-        parsed = urlparse(raw_url)
-        clean = urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"), "", "", ""))
-        return clean
-    except Exception:
-        return raw_url.strip().rstrip("/")
+  """Membersihkan URL dari query parameters dan trailing slash."""
+  try:
+    parsed = urlparse(raw_url)
+    clean = urlunparse((
+        parsed.scheme.lower(),
+        parsed.netloc.lower(),
+        parsed.path.rstrip("/"),
+        "",
+        "",
+        "",
+    ))
+    return clean
+  except Exception:
+    return raw_url.strip().rstrip("/")
 
 
 def generate_job_hash(title: str, clean_url: str) -> str:
-    """Membuat signature unik dari title dan URL yang bersih."""
-    unique_string = f"{title.lower().strip()}|{clean_url}"
-    return hashlib.sha256(unique_string.encode()).hexdigest()
+  """Membuat signature unik dari title dan URL yang bersih."""
+  unique_string = f"{title.lower().strip()}|{clean_url}"
+  return hashlib.sha256(unique_string.encode()).hexdigest()
 
 
 def load_seen_urls():
-    """Membaca riwayat identifier yang pernah dikirim."""
-    if os.path.exists(SEEN_URLS_FILE):
-        try:
-            with open(SEEN_URLS_FILE, "r") as f:
-                data = json.load(f)
-                return set(data)
-        except Exception as e:
-            print(f"⚠️ Gagal membaca {SEEN_URLS_FILE}: {e}")
-    return set()
+  """Membaca riwayat identifier yang pernah dikirim."""
+  if os.path.exists(SEEN_URLS_FILE):
+    try:
+      with open(SEEN_URLS_FILE, "r") as f:
+        data = json.load(f)
+        return set(data)
+    except Exception as e:
+      print(f"⚠️ Gagal membaca {SEEN_URLS_FILE}: {e}")
+  return set()
 
 
 def save_seen_urls(seen_urls):
-    """Menyimpan riwayat identifier ke file JSON."""
-    try:
-        with open(SEEN_URLS_FILE, "w") as f:
-            json.dump(list(seen_urls), f, indent=2)
-        print(f"💾 Berhasil menyimpan {len(seen_urls)} data ke {SEEN_URLS_FILE}")
-    except Exception as e:
-        print(f"⚠️ Gagal menyimpan {SEEN_URLS_FILE}: {e}")
+  """Menyimpan riwayat identifier ke file JSON."""
+  try:
+    with open(SEEN_URLS_FILE, "w") as f:
+      json.dump(list(seen_urls), f, indent=2)
+    print(f"💾 Berhasil menyimpan {len(seen_urls)} data ke {SEEN_URLS_FILE}")
+  except Exception as e:
+    print(f"⚠️ Gagal menyimpan {SEEN_URLS_FILE}: {e}")
 
 
 def is_job_active(url):
-    """Memeriksa apakah link lowongan masih aktif di portal ATS."""
-    try:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        }
-        response = requests.get(url, headers=headers, timeout=8, allow_redirects=True)
+  """Memeriksa apakah link lowongan masih aktif di portal ATS."""
+  try:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            " (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": (
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        ),
+    }
+    response = requests.get(
+        url, headers=headers, timeout=8, allow_redirects=True
+    )
 
-        if response.status_code in [404, 410]:
-            return False
+    if response.status_code in [404, 410]:
+      return False
 
-        if response.status_code != 200:
-            return any(
-                ats in url
-                for ats in ["greenhouse.io", "lever.co", "ashbyhq.com", "smartrecruiters.com"]
-            )
+    if response.status_code != 200:
+      return any(
+          ats in url
+          for ats in [
+              "greenhouse.io",
+              "lever.co",
+              "ashbyhq.com",
+              "smartrecruiters.com",
+          ]
+      )
 
-        expired_keywords = [
-            "no longer accepting applications",
-            "job has expired",
-            "position has been filled",
-            "this job is closed",
-            "this role is no longer available",
-            "page not found",
-            "404 not found",
-            "exception occurred",
-            "we've encountered a problem",
-        ]
+    expired_keywords = [
+        "no longer accepting applications",
+        "job has expired",
+        "position has been filled",
+        "this job is closed",
+        "this role is no longer available",
+        "page not found",
+        "404 not found",
+        "exception occurred",
+        "we've encountered a problem",
+    ]
 
-        content_lower = response.text.lower()
-        if any(keyword in content_lower for keyword in expired_keywords):
-            return False
+    content_lower = response.text.lower()
+    if any(keyword in content_lower for keyword in expired_keywords):
+      return False
 
-        return True
-    except Exception:
-        return False
+    return True
+  except Exception:
+    return False
+
+
+def is_disqualified_job(title: str, snippet: str, category: str) -> bool:
+  """Filter lokal Python untuk membuang job US-only atau non-sponsorship sebelum ke LLM."""
+  combined = f"{title} {snippet}".lower()
+
+  if category == "REMOTE_GLOBAL":
+    # Buang yang terikat state US (Contoh: Lehi, UT / Austin, TX)
+    if US_STATE_PATTERN.search(combined) and (
+        "united states" in combined or "remote - us" in combined or ", ut" in combined
+    ):
+      return True
+    if any(bad_kw in combined for bad_kw in DISQUALIFIED_KEYWORDS_GLOBAL):
+      return True
+
+  elif category == "VISA_SPONSOR":
+    if any(bad_kw in combined for bad_kw in DISQUALIFIED_KEYWORDS_SPONSOR):
+      return True
+
+  return False
 
 
 def search_tavily(query, domains=None):
-    """Mencari listing pekerjaan via Tavily API."""
-    if not TAVILY_API_KEY:
-        print("⚠️ Warning: TAVILY_API_KEY tidak ditemukan.")
-        return []
+  """Mencari listing pekerjaan via Tavily API."""
+  if not TAVILY_API_KEY:
+    print("⚠️ Warning: TAVILY_API_KEY tidak ditemukan.")
+    return []
 
-    url = "https://api.tavily.com/search"
-    payload = {
-        "api_key": TAVILY_API_KEY,
-        "query": query,
-        "topic": "general",
-        "days": 2,
-        "max_results": 15,
-        "search_depth": "advanced",
-    }
+  url = "https://api.tavily.com/search"
+  payload = {
+      "api_key": TAVILY_API_KEY,
+      "query": query,
+      "topic": "general",
+      "days": 2,
+      "max_results": 15,
+      "search_depth": "advanced",
+  }
 
-    if domains:
-        payload["include_domains"] = domains
+  if domains:
+    payload["include_domains"] = domains
 
-    try:
-        response = requests.post(url, json=payload, timeout=15)
-        if response.status_code == 200:
-            results = response.json().get("results", [])
-            valid_jobs = []
+  try:
+    response = requests.post(url, json=payload, timeout=15)
+    if response.status_code == 200:
+      results = response.json().get("results", [])
+      valid_jobs = []
 
-            for r in results:
-                link = r.get("url", "")
+      for r in results:
+        link = r.get("url", "")
 
-                if any(bad_domain in link.lower() for bad_domain in EXCLUDED_DOMAINS):
-                    continue
+        if any(bad_domain in link.lower() for bad_domain in EXCLUDED_DOMAINS):
+          continue
 
-                if is_job_active(link):
-                    clean_url = normalize_url(link)
-                    job_title = r.get("title", "Job Posting")
-                    valid_jobs.append({
-                        "title": job_title,
-                        "url": link,
-                        "clean_url": clean_url,
-                        "hash": generate_job_hash(job_title, clean_url),
-                        "snippet": r.get("content", "")[:450],
-                    })
-                else:
-                    print(f"⏩ Skipping closed/expired job: {link}")
+        if is_job_active(link):
+          clean_url = normalize_url(link)
+          job_title = r.get("title", "Job Posting")
+          valid_jobs.append({
+              "title": job_title,
+              "url": link,
+              "clean_url": clean_url,
+              "hash": generate_job_hash(job_title, clean_url),
+              "snippet": r.get("content", "")[:500],
+          })
+        else:
+          print(f"⏩ Skipping closed/expired job: {link}")
 
-            return valid_jobs
-        return []
-    except Exception as e:
-        print(f"❌ Error searching '{query}': {e}")
-        return []
+      return valid_jobs
+    return []
+  except Exception as e:
+    print(f"❌ Error searching '{query}': {e}")
+    return []
 
 
 def get_job_postings(seen_hashes):
-    """Menyaring postingan lowongan kerja dari domain ATS Tier-1."""
-    ats_domains = [
-        "boards.greenhouse.io",
-        "job-boards.greenhouse.io",
-        "jobs.lever.co",
-        "jobs.ashbyhq.com",
-        "jobs.smartrecruiters.com",
-    ]
+  """Menyaring postingan lowongan kerja dari domain ATS Tier-1 dengan pre-filter ketat."""
+  ats_domains = [
+      "boards.greenhouse.io",
+      "job-boards.greenhouse.io",
+      "jobs.lever.co",
+      "jobs.ashbyhq.com",
+      "jobs.smartrecruiters.com",
+  ]
 
-    search_configs = [
-        {
-            "category": "REMOTE_GLOBAL",
-            "query": (
-                '("Site Reliability Engineer" OR "Cloud Platform Engineer" OR "Senior DevOps") '
-                '("Worldwide" OR "Anywhere" OR "Remote - Global" OR "APAC" OR "Indonesia") '
-                '("Kubernetes" OR "OpenShift" OR "Terraform") '
-                '-"US only" -"Must be located in US" -"Security Clearance" -"EU only"'
-            ),
-            "domains": ats_domains,
-        },
-        {
-            "category": "VISA_SPONSOR",
-            "query": (
-                '("Site Reliability Engineer" OR "Platform Engineer" OR "Cloud Engineer") '
-                '("visa sponsorship" OR "relocation support") '
-                '("Kubernetes" OR "Cloud Infrastructure") '
-                '("Japan" OR "Dubai" OR "UAE" OR "Singapore" OR "Europe" OR "Germany")'
-            ),
-            "domains": ats_domains,
-        },
-    ]
+  search_configs = [
+      {
+          "category": "REMOTE_GLOBAL",
+          "query": (
+              '("Site Reliability Engineer" OR "Cloud Platform Engineer" OR'
+              ' "Senior DevOps") ("Worldwide" OR "Anywhere" OR "Remote -'
+              ' Global" OR "APAC" OR "Indonesia") ("Kubernetes" OR "OpenShift"'
+              ' OR "Terraform") -"US only" -"Must be located in US"'
+              ' -"Security Clearance" -"EU only"'
+          ),
+          "domains": ats_domains,
+      },
+      {
+          "category": "VISA_SPONSOR",
+          "query": (
+              '("Site Reliability Engineer" OR "Platform Engineer" OR "Cloud'
+              ' Engineer") ("visa sponsorship" OR "relocation support")'
+              ' ("Kubernetes" OR "Cloud Infrastructure") ("Japan" OR "Dubai"'
+              ' OR "UAE" OR "Singapore" OR "Europe" OR "Germany")'
+          ),
+          "domains": ats_domains,
+      },
+  ]
 
-    job_data = {"REMOTE_GLOBAL": [], "VISA_SPONSOR": []}
-    print("🔎 Searching direct ATS links (Filtering duplicates & checking active status)...")
+  job_data = {"REMOTE_GLOBAL": [], "VISA_SPONSOR": []}
+  print(
+      "🔎 Searching direct ATS links (Filtering duplicates & checking active"
+      " status)..."
+  )
 
-    for cfg in search_configs:
-        results = search_tavily(cfg["query"], cfg["domains"])
-        for item in results:
-            job_hash = item["hash"]
+  for cfg in search_configs:
+    cat = cfg["category"]
+    results = search_tavily(cfg["query"], cfg["domains"])
 
-            if job_hash in seen_hashes or item["clean_url"] in seen_hashes:
-                continue
+    for item in results:
+      job_hash = item["hash"]
 
-            if not any(existing["hash"] == job_hash for existing in job_data[cfg["category"]]):
-                job_data[cfg["category"]].append(item)
+      if job_hash in seen_hashes or item["clean_url"] in seen_hashes:
+        continue
 
-    job_data["REMOTE_GLOBAL"] = job_data["REMOTE_GLOBAL"][:3]
-    job_data["VISA_SPONSOR"] = job_data["VISA_SPONSOR"][:3]
+      # Filter eliminasi lokal Python sebelum masuk daftar
+      if is_disqualified_job(item["title"], item["snippet"], cat):
+        print(f"🚫 Eliminated (Disqualified by local filter): {item['title']}")
+        continue
 
-    return job_data
+      if not any(
+          existing["hash"] == job_hash for existing in job_data[cat]
+      ):
+        job_data[cat].append(item)
+
+    # Batasi maksimal 2 role terbaik per kategori untuk menghemat token & RPM
+    job_data[cat] = job_data[cat][:2]
+
+  return job_data
 
 
 def format_jobs_raw_fallback(job_data: dict) -> str:
-    """Format cadangan jika API AI mengalami gangguan (503/429)."""
-    lines = [
-        "💼 *DAILY JOB HUNTER DIGEST (RAW FALLBACK)* 💼",
-        "====================================",
-        "⚠️ _Catatan: AI formatter sedang cooldown, menampilkan tautan langsung._\n",
-    ]
+  """Format cadangan jika API AI mengalami gangguan (503/429)."""
+  lines = [
+      "💼 *DAILY JOB HUNTER DIGEST (RAW FALLBACK)* 💼",
+      "====================================",
+      (
+          "⚠️ _Catatan: AI formatter sedang cooldown, menampilkan tautan"
+          " langsung._\n"
+      ),
+  ]
 
-    lines.append("🌐 *LOWONGAN REMOTE GLOBAL (TAP-TO-APPLY)*")
-    if job_data.get("REMOTE_GLOBAL"):
-        for j in job_data["REMOTE_GLOBAL"]:
-            lines.append(f"🔥 *{j['title']}*")
-            if j.get("snippet"):
-                lines.append(f"📝 {j['snippet'][:180].strip()}...")
-            lines.append(f"🔗 Apply: {j['url']}\n")
-    else:
-        lines.append("Belum ada lowongan dengan match tinggi hari ini.\n")
+  lines.append("🌐 *LOWONGAN REMOTE GLOBAL (TAP-TO-APPLY)*")
+  if job_data.get("REMOTE_GLOBAL"):
+    for j in job_data["REMOTE_GLOBAL"]:
+      lines.append(f"🔥 *{j['title']}*")
+      lines.append(f"🔗 Apply: {j['url']}\n")
+  else:
+    lines.append("Belum ada lowongan dengan match tinggi hari ini.\n")
 
-    lines.append("✈️ *LOWONGAN VISA SPONSOR / RELOKASI*")
-    if job_data.get("VISA_SPONSOR"):
-        for j in job_data["VISA_SPONSOR"]:
-            lines.append(f"🔥 *{j['title']}*")
-            if j.get("snippet"):
-                lines.append(f"📝 {j['snippet'][:180].strip()}...")
-            lines.append(f"🔗 Apply: {j['url']}\n")
-    else:
-        lines.append("Belum ada lowongan dengan match tinggi hari ini.\n")
+  lines.append("✈️ *LOWONGAN VISA SPONSOR / RELOKASI*")
+  if job_data.get("VISA_SPONSOR"):
+    for j in job_data["VISA_SPONSOR"]:
+      lines.append(f"🔥 *{j['title']}*")
+      lines.append(f"🔗 Apply: {j['url']}\n")
+  else:
+    lines.append("Belum ada lowongan dengan match tinggi hari ini.\n")
 
-    return "\n".join(lines)
+  return "\n".join(lines)
 
 
 def summarize_with_gemini(job_data, retries=2):
-    """Memformat dan menyaring hasil lowongan via Gemini dengan graceful degradation."""
-    if not job_data["REMOTE_GLOBAL"] and not job_data["VISA_SPONSOR"]:
-        print("ℹ️ Tidak ada lowongan baru yang lolos seleksi hari ini.")
-        return None
+  """Memformat lowongan via Gemini Flash API dengan schema terkompresi."""
+  if not job_data["REMOTE_GLOBAL"] and not job_data["VISA_SPONSOR"]:
+    print("ℹ️ Tidak ada lowongan baru yang lolos seleksi hari ini.")
+    return None
 
-    if not GEMINI_API_KEY:
-        print("⚠️ Warning: GEMINI_API_KEY tidak dikonfigurasi. Menggunakan raw fallback.")
-        return format_jobs_raw_fallback(job_data)
+  if not GEMINI_API_KEY:
+    print(
+        "⚠️ Warning: GEMINI_API_KEY tidak dikonfigurasi. Menggunakan raw"
+        " fallback."
+    )
+    return format_jobs_raw_fallback(job_data)
 
-    print("🤖 AI formatting direct job apply links with Gemini...")
-    client = genai.Client(api_key=GEMINI_API_KEY)
+  print("🤖 AI formatting direct job apply links with Gemini...")
+  client = genai.Client(api_key=GEMINI_API_KEY)
 
-    prompt = f"""
+  # Bersihkan data agar hemat token dan deterministik
+  clean_input = {}
+  for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]:
+    clean_input[cat] = [
+        {"title": j["title"], "snippet": j["snippet"], "url": j["url"]}
+        for j in job_data[cat]
+    ]
+
+  prompt = f"""
 You are an Executive Career Agent for Muchamat Riyan Khamdani.
 Filter and synthesize these ATS job postings into an actionable Telegram card in Bahasa Indonesia.
 
 CANDIDATE MASTER PROFILE:
 {CANDIDATE_PROFILE}
 
-RAW SCRAPED JOB DATA:
-{job_data}
+FILTERED JOB DATA:
+{json.dumps(clean_input, indent=2)}
 
 STRICT INSTRUCTIONS:
 1. Divide into 2 sections:
@@ -305,10 +400,10 @@ STRICT INSTRUCTIONS:
 3. FOR EACH VALID ROLE:
    - Header: 🔥 **[Match Score]% MATCH — [Judul Posisi - Perusahaan]**
    - 📍 Lokasi & 💰 Estimasi Gaji wajar (Contoh: $75,000 - $95,000 USD / tahun).
-   - 📋 *Jawaban form ("Why Us / Cover Pitch"):*
+   - 📋 *Jawaban form ("Why Us?"):*
      Generate a 2-SENTENCE punchy, high-impact answer in English linking Riyan's tier-1 banking OpenShift/K8s resilience (99.9% uptime) and IaC automation to the target company's mission.
      ENCLOSE THIS 2-SENTENCE ANSWER STRICTLY INSIDE MONOSPACE CODE BLOCKS (```) so Riyan can tap to copy it in 1 second on Telegram mobile.
-   - 🔗 Apply link: EXACT URL FROM DATA (Do not truncate or alter).
+   - 🔗 Apply: EXACT URL FROM DATA (Do not truncate or alter).
 4. If a section has no qualifying jobs, write: "Belum ada lowongan dengan match tinggi hari ini."
 
 OUTPUT FORMAT TEMPLATE:
@@ -319,111 +414,3 @@ OUTPUT FORMAT TEMPLATE:
 - 🔥 **[Match Score]% MATCH — [Judul Posisi - Perusahaan]**
   📍 [Lokasi] | 💰 Est. Gaji: [Rentang USD]
   📋 *Jawaban form ("Why Us?"):*
-  ```
-  [2-sentence high-impact pitch]
-  ```
-  🔗 Apply: [URL]
-
-✈️ **LOWONGAN VISA SPONSOR / RELOKASI**
-- 🔥 **[Match Score]% MATCH — [Judul Posisi - Perusahaan]**
-  📍 [Lokasi] | 💰 Est. Gaji: [Rentang USD]
-  📋 *Jawaban form ("Why Us?"):*
-  ```
-  [2-sentence high-impact pitch]
-  ```
-  🔗 Apply: [URL]
-"""
-
-    # Model Flash yang didukung kuota Free Tier (15 RPM / 1500 RPD)
-    models_to_try = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-    ]
-
-    for model_name in models_to_try:
-        print(f"🔄 Mencoba model: {model_name}...")
-        for attempt in range(1, retries + 1):
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                )
-                if response and response.text:
-                    return response.text
-            except Exception as e:
-                err_msg = str(e)
-                print(f"⚠️ [{model_name}] attempt {attempt} failed: {err_msg[:200]}")
-
-                # Langsung skip model jika tidak memiliki kuota sama sekali
-                if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                    if "limit: 0" in err_msg or "day limit exceeded" in err_msg:
-                        print(f"🚫 Kuota {model_name} tidak tersedia (limit: 0). Beralih ke model berikutnya.")
-                        break
-                    time.sleep(5 * attempt)
-
-                elif "503" in err_msg or "UNAVAILABLE" in err_msg:
-                    sleep_time = 3 * attempt
-                    print(f"⏳ Server {model_name} sedang padat (503), menunggu {sleep_time} detik...")
-                    time.sleep(sleep_time)
-
-                elif "404" in err_msg or "NOT_FOUND" in err_msg:
-                    print(f"⏩ Model {model_name} tidak ditemukan (404). Beralih.")
-                    break
-                else:
-                    time.sleep(2 * attempt)
-
-    print("⚠️ Semua model AI gagal/padat. Mengaktifkan raw text fallback...")
-    return format_jobs_raw_fallback(job_data)
-
-
-def send_telegram(message: str):
-    """Mengirim ringkasan lowongan ke bot Telegram."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("❌ Error: TELEGRAM_BOT_TOKEN atau TELEGRAM_CHAT_ID tidak ditemukan.")
-        return
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-
-    chunks = [message[i : i + 4000] for i in range(0, len(message), 4000)]
-    for chunk in chunks:
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": chunk,
-            "parse_mode": "Markdown",
-            "disable_web_page_preview": True,
-        }
-        try:
-            res = requests.post(url, json=payload, timeout=10)
-            if res.status_code != 200:
-                payload.pop("parse_mode", None)
-                requests.post(url, json=payload, timeout=10)
-        except Exception as e:
-            print(f"❌ Gagal mengirim pesan ke Telegram: {e}")
-
-
-def main():
-    print("🚀 Starting Job Hunter Agent...")
-    seen_urls = load_seen_urls()
-    job_data = get_job_postings(seen_hashes=seen_urls)
-
-    if not job_data["REMOTE_GLOBAL"] and not job_data["VISA_SPONSOR"]:
-        print("ℹ️ Tidak ada lowongan baru hari ini. Selesai.")
-        return
-
-    summary = summarize_with_gemini(job_data)
-    if summary:
-        send_telegram(summary)
-        print("✅ Notifikasi Telegram berhasil dikirim.")
-
-        for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]:
-            for item in job_data[cat]:
-                seen_urls.add(item["hash"])
-                seen_urls.add(item["clean_url"])
-        save_seen_urls(seen_urls)
-    else:
-        print("⚠️ Gagal memproses lowongan.")
-
-
-if __name__ == "__main__":
-    main()
