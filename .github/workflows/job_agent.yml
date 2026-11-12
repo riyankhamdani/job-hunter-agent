@@ -5,9 +5,10 @@ on:
     - cron: '0 1 * * *'  # Jam 01:00 UTC = Jam 08:00 WIB
   workflow_dispatch:     # Tombol pemicu manual dari tab Actions di GitHub
 
-# WAJIB: Memberikan izin ke GITHUB_TOKEN untuk push file kembali ke repo
+# WAJIB: Memberikan izin ke GITHUB_TOKEN untuk push file & hapus log lama
 permissions:
   contents: write
+  actions: write
 
 jobs:
   run-job-bot:
@@ -42,3 +43,10 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add seen_urls.json
           git diff --staged --quiet || (git commit -m "chore: persist seen_urls state [skip ci]" && git push)
+
+      - name: Auto-Cleanup Old Workflow Runs
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run list --limit 100 --json databaseId -q '.[5:] | .[].databaseId' | xargs -r -n1 gh run delete
