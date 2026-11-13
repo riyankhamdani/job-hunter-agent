@@ -2,7 +2,7 @@ name: Daily Job Hunter Execution (Jam 8 Pagi WIB)
 
 on:
   schedule:
-    - cron: '0 1 * * *'  # Jam 01:00 UTC = Jam 08:00 WIB
+    - cron: '47 0 * * *'
   workflow_dispatch:     # Tombol pemicu manual dari tab Actions di GitHub
 
 # WAJIB: Memberikan izin ke GITHUB_TOKEN untuk push file & hapus log lama
