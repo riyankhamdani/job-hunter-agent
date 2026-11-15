@@ -2,7 +2,7 @@ name: Daily Job Hunter Execution
 
 on:
   schedule:
-    - cron: '17 8 * * *'
+    - cron: '43 8 * * *'
   workflow_dispatch:     # Tombol pemicu manual dari tab Actions di GitHub
 
 # WAJIB: Memberikan izin ke GITHUB_TOKEN untuk push file & hapus log lama
