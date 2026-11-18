@@ -434,8 +434,8 @@ OUTPUT FORMAT TEMPLATE:
 """
 
   models_to_try = [
-      "gemini-2.5-flash",
-      "gemini-2.5-flash-lite",
+      "gemini-3.8-flash",
+      "gemini-3.5-flash-lite",
   ]
 
   for model_name in models_to_try:
@@ -465,17 +465,19 @@ OUTPUT FORMAT TEMPLATE:
   return format_jobs_raw_fallback(job_data)
 
 
-def send_telegram(message: str):
+def send_telegram(message: str) -> bool:
   if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     print("❌ Error: TELEGRAM_BOT_TOKEN atau TELEGRAM_CHAT_ID tidak ditemukan.")
-    return
+    return False
 
-  url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/sendMessage"
+  token = TELEGRAM_BOT_TOKEN.strip()
+  url = "[https://api.telegram.org/bot](https://api.telegram.org/bot)" + token + "/sendMessage"
   chunks = [message[i : i + 4000] for i in range(0, len(message), 4000)]
 
+  all_sent = True
   for chunk in chunks:
     payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
+        "chat_id": TELEGRAM_CHAT_ID.strip(),
         "text": chunk,
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
@@ -484,9 +486,15 @@ def send_telegram(message: str):
       res = requests.post(url, json=payload, timeout=10)
       if res.status_code != 200:
         payload.pop("parse_mode", None)
-        requests.post(url, json=payload, timeout=10)
+        res = requests.post(url, json=payload, timeout=10)
+      if res.status_code != 200:
+        print(f"❌ Telegram API error ({res.status_code}): {res.text[:200]}")
+        all_sent = False
     except Exception as e:
       print(f"❌ Gagal mengirim pesan ke Telegram: {e}")
+      all_sent = False
+
+  return all_sent
 
 
 def main():
@@ -500,14 +508,15 @@ def main():
 
   summary = summarize_with_gemini(job_data)
   if summary:
-    send_telegram(summary)
-    print("✅ Notifikasi Telegram berhasil dikirim.")
-
-    for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]:
-      for item in job_data[cat]:
-        seen_urls.add(item["hash"])
-        seen_urls.add(item["clean_url"])
-    save_seen_urls(seen_urls)
+    if send_telegram(summary):
+      print("✅ Notifikasi Telegram berhasil dikirim.")
+      for cat in ["REMOTE_GLOBAL", "VISA_SPONSOR"]:
+        for item in job_data[cat]:
+          seen_urls.add(item["hash"])
+          seen_urls.add(item["clean_url"])
+      save_seen_urls(seen_urls)
+    else:
+      print("⚠️ Pengiriman Telegram gagal; seen_urls.json tidak diperbarui agar bisa dicoba ulang.")
   else:
     print("⚠️ Gagal memproses lowongan.")
 
