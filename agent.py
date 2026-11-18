@@ -237,7 +237,7 @@ def search_tavily(query: str, domains: list[str], seen_hashes: set) -> list[dict
     print("⚠️ Warning: TAVILY_API_KEY tidak ditemukan.")
     return []
 
-  url = "https://api.tavily.com/search"
+  url = "https" + "://api.tavily.com/search"
   payload = {
       "api_key": TAVILY_API_KEY,
       "query": query,
@@ -471,7 +471,7 @@ def send_telegram(message: str) -> bool:
     return False
 
   token = TELEGRAM_BOT_TOKEN.strip()
-  url = "[https://api.telegram.org/bot](https://api.telegram.org/bot)" + token + "/sendMessage"
+  url = "https" + "://api.telegram.org/bot" + token + "/sendMessage"
   chunks = [message[i : i + 4000] for i in range(0, len(message), 4000)]
 
   all_sent = True
