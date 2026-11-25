@@ -13,6 +13,7 @@ permissions:
 jobs:
   run-job-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # Batas keras agar job otomatis mati kalau hang
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -25,16 +26,17 @@ jobs:
       - name: Install Dependencies
         run: |
           pip install --upgrade pip
-          pip install requests pyTelegramBotAPI google-genai tavily-python
+          pip install requests google-genai
 
       - name: Run Job Hunter Script
+        timeout-minutes: 7
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          python agent.py
+          python -u agent.py
 
       - name: Commit and Push seen_urls.json
         if: success()
@@ -49,4 +51,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh run list --limit 100 --json databaseId -q '.[5:] | .[].databaseId' | xargs -r -n1 gh run delete
+          gh run list --limit 100 --json databaseId -q '.[5:] | .[].databaseId' | xargs -r -n1 gh run delete || true
