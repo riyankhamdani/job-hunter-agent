@@ -495,7 +495,7 @@ OUTPUT FORMAT TEMPLATE:
     return format_jobs_raw_fallback(job_data)
 
 
-def send_telegram(message: str) -> bool:
+def send_telegram(message: str, retries: int = 2) -> bool:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("❌ Error: TELEGRAM_BOT_TOKEN atau TELEGRAM_CHAT_ID tidak ditemukan.")
         return False
@@ -506,22 +506,28 @@ def send_telegram(message: str) -> bool:
 
     all_sent = True
     for chunk in chunks:
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID.strip(),
-            "text": chunk,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        }
-        try:
-            res = requests.post(url, json=payload, timeout=(5, 10))
-            if res.status_code != 200:
-                payload.pop("parse_mode", None)
-                res = requests.post(url, json=payload, timeout=(5, 10))
-            if res.status_code != 200:
+        sent = False
+        for attempt in range(1, retries + 1):
+            payload = {
+                "chat_id": TELEGRAM_CHAT_ID.strip(),
+                "text": chunk,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            }
+            try:
+                res = requests.post(url, json=payload, timeout=(10, 25))
+                if res.status_code != 200:
+                    payload.pop("parse_mode", None)
+                    res = requests.post(url, json=payload, timeout=(10, 25))
+                if res.status_code == 200:
+                    sent = True
+                    break
                 print(f"❌ Telegram API error ({res.status_code}): {res.text[:200]}")
-                all_sent = False
-        except Exception as e:
-            print(f"❌ Gagal mengirim pesan ke Telegram: {e}")
+            except Exception as e:
+                print(f"⚠️ Telegram attempt {attempt} gagal: {e}")
+                time.sleep(3)
+
+        if not sent:
             all_sent = False
 
     return all_sent
